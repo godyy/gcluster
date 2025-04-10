@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package protos;
+
+option go_package = "github.com/godyy/gcluster/net/internal/protocol/pb";
+
+// 握手
+message HSApply {
+    string NodeId = 1; // 结点ID
+    string Token = 2; // 口令
+    int64 Time = 3; // 触发申请的时间
+}
+
+// 握手被接受
+message HSAccepted {
+    string NodeId = 1; // 结点ID
+    string Token = 2; // 口令
+}
+
+// 握手被拒绝
+enum HSRejectedReason {
+    NodeIdOrTokenWrong = 0;
+    SessionEstablishing = 1;
+    SessionEstablished = 2;
+}
+message HSRejected {
+    HSRejectedReason Reason = 1; // 拒绝的原因 
+}
+
+// 握手完成
+message HSCompleted {}
+message HSCompletedAck {}
