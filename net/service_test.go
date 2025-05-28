@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godyy/gutils/log"
+	"github.com/godyy/glog"
 )
 
 type testServiceHandler struct {
@@ -60,12 +60,12 @@ func TestServiceConnect(t *testing.T) {
 	s1Addr := ":50001"
 	s2Addr := ":50002"
 
-	logger := log.NewLogger(&log.Config{
-		Level:        log.DebugLevel,
+	logger := glog.NewLogger(&glog.Config{
+		Level:        glog.DebugLevel,
 		EnableCaller: true,
 		CallerSkip:   0,
 		Development:  true,
-		Cores:        []log.CoreConfig{log.NewStdCoreConfig()},
+		Cores:        []glog.CoreConfig{glog.NewStdCoreConfig()},
 	})
 
 	sessionCfg := SessionConfig{
@@ -152,12 +152,12 @@ func TestServiceSession(t *testing.T) {
 	receives := new(atomic.Int64)
 	wg := &sync.WaitGroup{}
 
-	logger := log.NewLogger(&log.Config{
-		Level:        log.DebugLevel,
+	logger := glog.NewLogger(&glog.Config{
+		Level:        glog.DebugLevel,
 		EnableCaller: true,
 		CallerSkip:   0,
 		Development:  true,
-		Cores:        []log.CoreConfig{log.NewStdCoreConfig()},
+		Cores:        []glog.CoreConfig{glog.NewStdCoreConfig()},
 	})
 
 	sessionCfg := SessionConfig{
@@ -331,12 +331,12 @@ func TestServiceConcurrentConnect(t *testing.T) {
 	receives := new(atomic.Int64)
 	wg := &sync.WaitGroup{}
 
-	logger := log.NewLogger(&log.Config{
-		Level:        log.DebugLevel,
+	logger := glog.NewLogger(&glog.Config{
+		Level:        glog.DebugLevel,
 		EnableCaller: true,
 		CallerSkip:   0,
 		Development:  true,
-		Cores:        []log.CoreConfig{log.NewStdCoreConfig()},
+		Cores:        []glog.CoreConfig{glog.NewStdCoreConfig()},
 	})
 
 	sessionCfg := SessionConfig{

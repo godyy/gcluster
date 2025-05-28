@@ -14,7 +14,7 @@ import (
 
 	"github.com/godyy/gcluster/center"
 	"github.com/godyy/gcluster/net"
-	"github.com/godyy/gutils/log"
+	"github.com/godyy/glog"
 	"github.com/pkg/errors"
 )
 
@@ -63,12 +63,12 @@ func TestAgent(t *testing.T) {
 	serviceId := "service1"
 	serviceAddr := ":50001"
 
-	logger := log.NewLogger(&log.Config{
-		Level:        log.DebugLevel,
+	logger := glog.NewLogger(&glog.Config{
+		Level:        glog.DebugLevel,
 		EnableCaller: true,
 		CallerSkip:   0,
 		Development:  true,
-		Cores:        []log.CoreConfig{log.NewStdCoreConfig()},
+		Cores:        []glog.CoreConfig{glog.NewStdCoreConfig()},
 	})
 
 	center := &testCenter{nodes: make(map[string]*testNode)}
@@ -174,12 +174,12 @@ func TestConcurrentConnect(t *testing.T) {
 	receives := new(atomic.Int64)
 	wg := &sync.WaitGroup{}
 
-	logger := log.NewLogger(&log.Config{
-		Level:        log.WarnLevel,
+	logger := glog.NewLogger(&glog.Config{
+		Level:        glog.WarnLevel,
 		EnableCaller: true,
 		CallerSkip:   0,
 		Development:  true,
-		Cores:        []log.CoreConfig{log.NewStdCoreConfig()},
+		Cores:        []glog.CoreConfig{glog.NewStdCoreConfig()},
 	})
 
 	center := &testCenter{nodes: make(map[string]*testNode)}

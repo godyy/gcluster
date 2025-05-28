@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/godyy/gutils/log"
+	"github.com/godyy/glog"
 )
 
 type testClientHandler struct {
@@ -24,12 +24,12 @@ func TestClientConnect(t *testing.T) {
 	serviceId := "service"
 	serviceAddr := ":50001"
 
-	logger := log.NewLogger(&log.Config{
-		Level:        log.DebugLevel,
+	logger := glog.NewLogger(&glog.Config{
+		Level:        glog.DebugLevel,
 		EnableCaller: true,
 		CallerSkip:   0,
 		Development:  true,
-		Cores:        []log.CoreConfig{log.NewStdCoreConfig()},
+		Cores:        []glog.CoreConfig{glog.NewStdCoreConfig()},
 	})
 
 	sessionCfg := SessionConfig{

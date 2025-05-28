@@ -5,7 +5,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/godyy/gutils/log"
+	"github.com/godyy/glog"
 )
 
 // Dialer 负责连接地址为 addr 的服务.
@@ -90,7 +90,7 @@ type sessionManagerImpl interface {
 	base() *sessionManager
 
 	// setLogger 设置日志工具.
-	setLogger(logger log.Logger)
+	setLogger(logger glog.Logger)
 
 	// getSessionConfig 返回 Session 配置.
 	getSessionConfig() *SessionConfig
@@ -113,8 +113,8 @@ type sessionManager struct {
 	sessions       *sessionMap    // 已联通的 Session.
 	sessionHandler SessionHandler // Session 事件处理器.
 	pm             PacketManager  // 数据包管理器, 可选.
-	rootLogger     log.Logger     // 根日志工具, 所有其它日志工具均是从其复制而来.
-	logger         log.Logger     // 日志工具.
+	rootLogger     glog.Logger    // 根日志工具, 所有其它日志工具均是从其复制而来.
+	logger         glog.Logger    // 日志工具.
 
 	mutex sync.RWMutex // RWMutex for following.
 	state int32        // 状态
@@ -137,10 +137,10 @@ func (sm *sessionManager) initRootLogger() {
 	if sm.rootLogger != nil {
 		return
 	}
-	sm.rootLogger = createStdLogger(log.DebugLevel)
+	sm.rootLogger = createStdLogger(glog.DebugLevel)
 }
 
-func (sm *sessionManager) setRootLogger(logger log.Logger) {
+func (sm *sessionManager) setRootLogger(logger glog.Logger) {
 	sm.rootLogger = logger
 }
 

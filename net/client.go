@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/godyy/gcluster/net/internal/protocol/pb"
-	"github.com/godyy/gutils/log"
+	"github.com/godyy/glog"
 )
 
 // ClientConfig 客户端配置
@@ -309,7 +309,7 @@ func (c *Client) initLogger() {
 }
 
 // setLogger 设置日志工具.
-func (c *Client) setLogger(logger log.Logger) {
+func (c *Client) setLogger(logger glog.Logger) {
 	c.setRootLogger(logger)
 	c.logger = c.rootLogger.Named("Client").WithFields(lfdNodeId(c.cfg.NodeId))
 }

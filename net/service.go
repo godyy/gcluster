@@ -5,7 +5,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/godyy/gutils/log"
+	"github.com/godyy/glog"
 	pkgerrors "github.com/pkg/errors"
 )
 
@@ -164,7 +164,7 @@ func (s *Service) initLogger() {
 }
 
 // setLogger 设置日志工具.
-func (s *Service) setLogger(logger log.Logger) {
+func (s *Service) setLogger(logger glog.Logger) {
 	s.setRootLogger(logger)
 	s.logger = s.rootLogger.Named("Service").WithFields(lfdNodeId(s.cfg.NodeId))
 }

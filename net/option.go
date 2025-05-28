@@ -1,6 +1,6 @@
 package net
 
-import "github.com/godyy/gutils/log"
+import "github.com/godyy/glog"
 
 // SessionManagerOption SessionManager 选项.
 type SessionManagerOption func(sessionManagerImpl)
@@ -13,7 +13,7 @@ func WithPacketManager(pm PacketManager) SessionManagerOption {
 }
 
 // WithLogger 日志工具选项.
-func WithLogger(logger log.Logger) SessionManagerOption {
+func WithLogger(logger glog.Logger) SessionManagerOption {
 	return func(sm sessionManagerImpl) {
 		sm.setLogger(logger.Named("net"))
 	}

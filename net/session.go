@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/godyy/glog"
 	"github.com/godyy/gnet"
 	"github.com/godyy/gutils/buffer"
 	"github.com/godyy/gutils/buffer/bytes"
-	"github.com/godyy/gutils/log"
 	pkgerrors "github.com/pkg/errors"
 )
 
@@ -72,7 +72,7 @@ type session struct {
 	active         bool               // 是否发起方（需要发送心跳请求）.
 	pendingPackets chan packet        // 待发送数据包队列.
 	lastActiveTime int64              // 最近一次活跃的时间（发送/接收消息）.
-	logger         log.Logger         // 日志工具.
+	logger         glog.Logger        // 日志工具.
 
 	mutex    sync.RWMutex  // RWMutex for following.
 	state    int32         // 状态.
@@ -81,7 +81,7 @@ type session struct {
 }
 
 // newSession 构造 session.
-func newSession(sm sessionManagerImpl, remoteNodeId string, active bool, conn net.Conn, logger log.Logger) *session {
+func newSession(sm sessionManagerImpl, remoteNodeId string, active bool, conn net.Conn, logger glog.Logger) *session {
 	s := &session{
 		remoteNodeId:   remoteNodeId,
 		sm:             sm,

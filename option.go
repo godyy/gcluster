@@ -2,7 +2,7 @@ package gcluster
 
 import (
 	"github.com/godyy/gcluster/net"
-	"github.com/godyy/gutils/log"
+	"github.com/godyy/glog"
 )
 
 // optionSet 选项集合.
@@ -14,7 +14,7 @@ type optionSet struct {
 type Option func(*optionSet)
 
 // WithLogger 日志工具选项.
-func WithLogger(logger log.Logger) Option {
+func WithLogger(logger glog.Logger) Option {
 	return func(opts *optionSet) {
 		opts.smOptions = append(opts.smOptions, net.WithLogger(logger.Named("gcluster")))
 	}
