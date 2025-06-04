@@ -75,7 +75,7 @@ type session struct {
 	logger         glog.Logger        // 日志工具.
 
 	mutex    sync.RWMutex  // RWMutex for following.
-	state    int32         // 状态.
+	state    int8          // 状态.
 	core     *gnet.Session // 核心实现.
 	chClosed chan struct{} // 关闭 chan.
 }
@@ -103,25 +103,63 @@ func (s *session) RemoteNodeId() string {
 	return s.remoteNodeId
 }
 
+// lockState 锁定状态.
+func (s *session) lockState(need int8, read bool) error {
+	if read {
+		s.mutex.RLock()
+	} else {
+		s.mutex.Lock()
+	}
+
+	state := s.state
+	if state == need {
+		return nil
+	}
+
+	if read {
+		s.mutex.RUnlock()
+	} else {
+		s.mutex.Unlock()
+	}
+
+	switch state {
+	case stateInit:
+		return ErrNotStarted
+	case stateStarted:
+		return ErrStarted
+	case stateClosed:
+		return ErrClosed
+	default:
+		panic(fmt.Sprintf("invalid session state %d", state))
+	}
+}
+
+// unlockState 解锁状态.
+func (s *session) unlockState(read bool) {
+	if read {
+		s.mutex.RUnlock()
+	} else {
+		s.mutex.Unlock()
+	}
+}
+
 // start 启动会话
 func (s *session) start() error {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	if atomic.LoadInt32(&s.state) > stateInit {
-		return ErrStarted
+	if err := s.lockState(stateInit, false); err != nil {
+		return err
 	}
+	defer s.unlockState(false)
 
 	// 启动 core. 若出错，直接关闭 session 并返回错误.
 	if err := s.core.Start(); err != nil {
 		s.core = nil
 		close(s.chClosed)
-		atomic.StoreInt32(&s.state, stateClosed)
+		s.state = stateClosed
 		return err
 	}
 
 	s.refreshActiveTime()
-	atomic.StoreInt32(&s.state, stateStarted)
+	s.state = stateStarted
 	go s.tick()
 
 	s.logger.Info("started")
@@ -155,7 +193,7 @@ func (s *session) tickHeartbeat() {
 		s.logger.Debug("send heartbeat")
 		p := &heartbeatPacket{}
 		p.setPing()
-		if err := s.send(context.Background(), p); err != nil {
+		if err := s.send(context.Background(), p, false); err != nil {
 			s.logger.ErrorFields("send heartbeat", lfdError(err))
 		}
 	} else if time.Duration(time.Now().UnixNano()-atomic.LoadInt64(&s.lastActiveTime)) >= s.sm.getSessionConfig().InactiveTimeout {
@@ -166,17 +204,16 @@ func (s *session) tickHeartbeat() {
 
 // close 关闭会话.
 func (s *session) close(err error) {
-	s.mutex.Lock()
-	if atomic.LoadInt32(&s.state) >= stateClosed {
-		s.mutex.Unlock()
+	if err := s.lockState(stateStarted, false); err != nil {
 		return
 	}
 
 	// 保证重入时逻辑的正确性，优先更新状态.
 	// 为了避免死锁，先解锁. 因为关闭 core 时，可能会触发 SessionOnClosed 回调，
 	// 既而导致重入 close.
-	atomic.StoreInt32(&s.state, stateClosed)
-	s.mutex.Unlock()
+	s.state = stateClosed
+
+	s.unlockState(false)
 
 	// 执行关闭逻辑.
 	// 将 core 置为空是为了解除环引用，确保不回造成内存泄漏.
@@ -194,11 +231,13 @@ func (s *session) close(err error) {
 
 // isClosed 返回 session 是否已关闭.
 func (s *session) isClosed() bool {
-	return atomic.LoadInt32(&s.state) >= stateClosed
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.state == stateClosed
 }
 
 // send 发送数据底层接口.
-func (s *session) send(ctx context.Context, p packet) error {
+func (s *session) send(ctx context.Context, p packet, refreshActiveTime bool) error {
 	if ctx == nil {
 		return errors.New("context nil")
 	}
@@ -210,35 +249,38 @@ func (s *session) send(ctx context.Context, p packet) error {
 		return ErrPacketLengthOverflow
 	}
 
-	switch atomic.LoadInt32(&s.state) {
-	case stateInit:
-		return ErrNotStarted
-	case stateClosed:
-		return ErrClosed
-	default:
-		select {
-		case s.pendingPackets <- p:
-			return nil
-		case <-s.chClosed:
-			return ErrClosed
-		case <-ctx.Done():
-			return ctx.Err()
+	if err := s.lockState(stateStarted, true); err != nil {
+		return err
+	}
+	defer s.unlockState(true)
+
+	select {
+	case s.pendingPackets <- p:
+		if refreshActiveTime {
+			s.refreshActiveTime()
 		}
+		return nil
+	case <-s.chClosed:
+		return ErrClosed
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
 // SendRaw 发送 Raw 数据包.
 func (s *session) SendRaw(ctx context.Context, p *RawPacket) error {
-	err := s.send(ctx, p)
-	if err == nil {
-		s.refreshActiveTime()
-	}
-	return err
+	return s.send(ctx, p, true)
 }
 
 // refreshActiveTime 刷新活跃时间.
 func (s *session) refreshActiveTime() {
-	atomic.StoreInt64(&s.lastActiveTime, time.Now().UnixNano())
+	activeTime := time.Now().UnixNano()
+	for {
+		lastActiveTime := atomic.LoadInt64(&s.lastActiveTime)
+		if lastActiveTime >= activeTime || atomic.CompareAndSwapInt64(&s.lastActiveTime, lastActiveTime, activeTime) {
+			break
+		}
+	}
 }
 
 // SessionPendingPacket 实现 gnet.SessionHandler. 返回待发送的数据包.
@@ -273,7 +315,7 @@ func (s *session) handleHeartbeat(p *heartbeatPacket) error {
 	if ping {
 		s.logger.Debug("handle ping")
 		p.setPong()
-		return s.send(context.Background(), p)
+		return s.send(context.Background(), p, false)
 	} else {
 		s.logger.Debug("receive pong")
 	}
