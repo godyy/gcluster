@@ -2,6 +2,7 @@ package net
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 
@@ -25,8 +26,8 @@ type Session interface {
 	// close 关闭会话.
 	close(err error)
 
-	// isClosed 是否关闭.
-	isClosed() bool
+	// keepActive 保持活跃.
+	keepActive() error
 }
 
 // sessionMap sessionMap.
@@ -108,16 +109,17 @@ type sessionManagerImpl interface {
 	putRawPacket(p *RawPacket)
 }
 
+// sessionManager Session 管理器内部实现.
 type sessionManager struct {
 	dialer         Dialer         // 连接器，负责连接其它服务.
-	sessions       *sessionMap    // 已联通的 Session.
 	sessionHandler SessionHandler // Session 事件处理器.
 	pm             PacketManager  // 数据包管理器, 可选.
 	rootLogger     glog.Logger    // 根日志工具, 所有其它日志工具均是从其复制而来.
 	logger         glog.Logger    // 日志工具.
 
-	mutex sync.RWMutex // RWMutex for following.
-	state int32        // 状态
+	mutex    sync.RWMutex // RWMutex for following.
+	state    int8         // 状态
+	sessions *sessionMap  // 已联通的 Session.
 }
 
 func newSessionManager(dialer Dialer, sessionHandler SessionHandler) sessionManager {
@@ -144,19 +146,58 @@ func (sm *sessionManager) setRootLogger(logger glog.Logger) {
 	sm.rootLogger = logger
 }
 
-func (sm *sessionManager) getState() int32 {
+func (sm *sessionManager) getState() int8 {
 	sm.mutex.RLock()
 	defer sm.mutex.RUnlock()
 	return sm.state
 }
 
-func (sm *sessionManager) start(f func() error) error {
-	sm.mutex.Lock()
-	defer sm.mutex.Unlock()
-
-	if sm.state >= stateStarted {
-		return ErrStarted
+// lockState 锁定状态.
+func (sm *sessionManager) lockState(need int8, read bool) error {
+	if read {
+		sm.mutex.RLock()
+	} else {
+		sm.mutex.Lock()
 	}
+
+	state := sm.state
+	if state == need {
+		return nil
+	}
+
+	if read {
+		sm.mutex.RUnlock()
+	} else {
+		sm.mutex.Unlock()
+	}
+
+	switch state {
+	case stateInit:
+		return ErrNotStarted
+	case stateStarted:
+		return ErrStarted
+	case stateClosed:
+		return ErrClosed
+	default:
+		panic(fmt.Sprintf("invalid session manager state %d", state))
+	}
+}
+
+// unlockState 解锁状态.
+func (sm *sessionManager) unlockState(read bool) {
+	if read {
+		sm.mutex.RUnlock()
+	} else {
+		sm.mutex.Unlock()
+	}
+}
+
+// start 启动逻辑.
+func (sm *sessionManager) start(f func() error) error {
+	if err := sm.lockState(stateInit, false); err != nil {
+		return err
+	}
+	defer sm.unlockState(false)
 
 	if f != nil {
 		if err := f(); err != nil {
@@ -169,14 +210,13 @@ func (sm *sessionManager) start(f func() error) error {
 	return nil
 }
 
+// close 关闭逻辑.
 func (sm *sessionManager) close(f func()) error {
-	sm.mutex.Lock()
-	if sm.state >= stateClosed {
-		sm.mutex.Unlock()
-		return ErrClosed
+	if err := sm.lockState(stateStarted, false); err != nil {
+		return err
 	}
 	sm.state = stateClosed
-	sm.mutex.Unlock()
+	sm.unlockState(false)
 
 	if f != nil {
 		f()
@@ -187,43 +227,50 @@ func (sm *sessionManager) close(f func()) error {
 	return nil
 }
 
-func (sm *sessionManager) connect(nodeId, addr string, f func(nodeId, addr string) (Session, error)) (Session, error) {
-	switch sm.getState() {
-	case stateInit:
-		return nil, ErrNotStarted
-	case stateClosed:
-		return nil, ErrClosed
-	default:
-		if session := sm.sessions.get(nodeId); session != nil && !session.isClosed() {
-			return session, nil
-		}
-		if session, err := f(nodeId, addr); err == nil {
-			return session, nil
-		} else if session = sm.sessions.get(nodeId); session != nil && !session.isClosed() {
-			return session, nil
-		} else {
-			return nil, err
-		}
+// connect 连接逻辑.
+func (sm *sessionManager) connect(nodeId, addr string, f func(nodeId, addr string) (Session, error)) (session Session, err error) {
+	session = sm.GetSession(nodeId)
+	if session != nil {
+		return
 	}
+
+	if session, err = f(nodeId, addr); err == nil {
+		return
+	}
+
+	session = sm.GetSession(nodeId)
+	if session != nil {
+		err = nil
+	}
+
+	return
 }
 
+// GetSession 获取连接 nodeId 指向 Service 的 Session.
 func (sm *sessionManager) GetSession(nodeId string) Session {
-	if sm.getState() == stateStarted {
-		if session := sm.sessions.get(nodeId); session != nil && !session.isClosed() {
-			return session
-		}
+	if err := sm.lockState(stateStarted, true); err != nil {
+		return nil
 	}
+	defer sm.unlockState(true)
+
+	if session := sm.sessions.get(nodeId); session != nil && session.keepActive() == nil {
+		return session
+	}
+
 	return nil
 }
 
+// onSessionPacket 处理 Session 数据包.
 func (sm *sessionManager) onSessionPacket(session Session, p *RawPacket) error {
 	return sm.sessionHandler.OnSessionPacket(session, p)
 }
 
+// onSessionClosed 处理 Session 关闭.
 func (sm *sessionManager) onSessionClosed(session Session, err error) {
 	sm.sessions.compareAndDelete(session)
 }
 
+// getRawPacket 获取 RawPacket.
 func (sm *sessionManager) getRawPacket(size int) *RawPacket {
 	if sm.pm != nil {
 		return sm.pm.GetRawPacket(size)
@@ -231,6 +278,7 @@ func (sm *sessionManager) getRawPacket(size int) *RawPacket {
 	return NewRawPacketWithSize(size)
 }
 
+// putRawPacket 回收 RawPacket.
 func (sm *sessionManager) putRawPacket(p *RawPacket) {
 	if sm.pm != nil {
 		sm.pm.PutRawPacket(p)

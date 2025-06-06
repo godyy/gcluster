@@ -65,7 +65,7 @@ func (c *SessionConfig) init() error {
 type session struct {
 	sm             sessionManagerImpl // Session 管理器.
 	remoteNodeId   string             // 远端节点ID.
-	active         bool               // 是否发起方（需要发送心跳请求）.
+	activeEnd      bool               // 是否主动的一端（需要发送心跳请求）.
 	pendingPackets chan packet        // 待发送数据包队列.
 	lastActiveTime int64              // 最近一次活跃的时间（发送/接收消息）.
 	logger         glog.Logger        // 日志工具.
@@ -77,15 +77,15 @@ type session struct {
 }
 
 // newSession 构造 session.
-func newSession(sm sessionManagerImpl, remoteNodeId string, active bool, conn net.Conn, logger glog.Logger) *session {
+func newSession(sm sessionManagerImpl, remoteNodeId string, activeEnd bool, conn net.Conn, logger glog.Logger) *session {
 	s := &session{
 		remoteNodeId:   remoteNodeId,
 		sm:             sm,
-		active:         active,
+		activeEnd:      activeEnd,
 		pendingPackets: make(chan packet, sm.getSessionConfig().PendingPacketQueueSize),
 		state:          stateInit,
 		chClosed:       make(chan struct{}),
-		logger:         logger.Named("session").WithFields(lfdRemoteNodeId(remoteNodeId), lfdActive(active)),
+		logger:         logger.Named("session").WithFields(lfdRemoteNodeId(remoteNodeId), lfdActiveEnd(activeEnd)),
 	}
 
 	packetReadWriter := newSessionPacketReadWriter(sm)
@@ -198,13 +198,6 @@ func (s *session) closeBaseLocked(err error, locked bool) {
 	s.sm.onSessionClosed(s, err)
 }
 
-// isClosed 返回 session 是否已关闭.
-func (s *session) isClosed() bool {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-	return s.state == stateClosed
-}
-
 // tick session 生命周期逻辑.
 func (s *session) tick() {
 	heartbeatTicker := time.NewTicker(s.sm.getSessionConfig().HeartbeatInterval)
@@ -224,7 +217,7 @@ func (s *session) tick() {
 
 // tickHeartbeat 心跳周期逻辑.
 func (s *session) tickHeartbeat() {
-	if s.active {
+	if s.activeEnd {
 		// 发起方负责发送心跳.
 
 		s.logger.Debug("send heartbeat")
@@ -295,6 +288,17 @@ func (s *session) sendDirect(ctx context.Context, p packet, refreshActiveTime bo
 // SendRaw 发送 Raw 数据包.
 func (s *session) SendRaw(ctx context.Context, p *RawPacket) error {
 	return s.send(ctx, p, true)
+}
+
+// keepActive 保持活跃.
+func (s *session) keepActive() error {
+	if err := s.lockState(stateStarted, true); err != nil {
+		return err
+	}
+	defer s.unlockState(true)
+
+	s.refreshActiveTime()
+	return nil
 }
 
 // refreshActiveTime 刷新活跃时间.
@@ -370,4 +374,6 @@ func (s *sessionLocal) SendRaw(_ context.Context, p *RawPacket) error {
 
 func (s *sessionLocal) close(_ error) {}
 
-func (s *sessionLocal) isClosed() bool { return false }
+func (s *sessionLocal) keepActive() error {
+	return nil
+}

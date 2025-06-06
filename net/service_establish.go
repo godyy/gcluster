@@ -14,26 +14,19 @@ import (
 // 两种 Session 可能会同时发起建立，但为了优化连接数，
 // 只会同时存在一个 Session，谁先建立成功谁就得到保留。
 
-// createSession 创建 Session.
-func (s *Service) createSession(remoteNodeId string, active bool, conn net.Conn) (Session, error) {
-	s.mutex.RLock()
-	if s.state >= stateClosed {
-		s.mutex.RUnlock()
-		_ = conn.Close()
-		return nil, ErrClosed
-	}
+// Connect 连接指定节点.
+func (s *Service) Connect(nodeId string, addr string) (Session, error) {
+	return s.connect(nodeId, addr, s.onConnect)
+}
 
-	session := newSession(s, remoteNodeId, active, conn, s.rootLogger)
-	if err := session.start(); err != nil {
-		s.mutex.RUnlock()
-		_ = conn.Close()
+func (s *Service) onConnect(nodeId, addr string) (Session, error) {
+	if err := s.lockState(stateStarted, true); err != nil {
 		return nil, err
 	}
-
-	s.sessions.add(session)
-	s.mutex.RUnlock()
-
-	return session, nil
+	establishment := s.getOrCreateEstablishment(nodeId)
+	s.unlockState(true)
+	s.startActiveEstablish(establishment, addr)
+	return establishment.wait()
 }
 
 // listen 网络监听逻辑.
@@ -79,7 +72,7 @@ func (s *Service) onPassiveConn(conn net.Conn) {
 	remoteNodeId := hsApply.NodeId
 
 	// 若重复建立，直接拒绝
-	if session := s.sessions.get(remoteNodeId); session != nil && !session.isClosed() {
+	if session := s.GetSession(remoteNodeId); session != nil {
 		s.logger.ErrorFields("session established", lfdNetRemoteAddr(conn.RemoteAddr()), lfdRemoteNodeId(hsApply.NodeId))
 		_ = handshakeHelper.writeRejected(conn, pb.HSRejectedReason_SessionEstablished, s.config().Handshake.Timeout)
 		_ = conn.Close()
@@ -116,17 +109,6 @@ func (s *Service) getOrCreateEstablishment(remoteNodeId string) *establishment {
 			return &ec
 		}
 	}
-}
-
-// Connect 连接指定节点.
-func (s *Service) Connect(nodeId string, addr string) (Session, error) {
-	return s.connect(nodeId, addr, s.onConnect)
-}
-
-func (s *Service) onConnect(nodeId, addr string) (Session, error) {
-	establishment := s.getOrCreateEstablishment(nodeId)
-	s.startActiveEstablish(establishment, addr)
-	return establishment.wait()
 }
 
 // whichEstablishEarlier 根据 establishment 判断 active 表示的连接是否更早开始建立.
@@ -574,13 +556,50 @@ func (s *Service) establishEnd(es *establishment) {
 		err = fmt.Errorf("unknown end status, activeState: %d, passiveState: %d", es.activeState(), es.passiveState())
 	}
 
+	// 连接建立失败.
 	if err != nil {
-		es.end(nil, err)
-	} else {
-		session, err := s.createSession(es.remoteNodeId, active, conn)
-		es.end(session, err)
+		s.establishEndFailed(es, err)
+		return
 	}
+
+	// 创建 session.
+	s.establishEndCreateSession(es, conn, active)
+}
+
+// establishEndFailed 连接建立失败.
+func (s *Service) establishEndFailed(es *establishment, err error) {
 	s.establishments.CompareAndDelete(es.remoteNodeId, es)
+	es.end(nil, err)
+}
+
+// establishEndCreateSession 连接建立成功后创建 session.
+func (s *Service) establishEndCreateSession(es *establishment, conn net.Conn, active bool) {
+	// 创建 session 并锁定状态.
+	session := newSession(s, es.remoteNodeId, active, conn, s.rootLogger)
+	if err := session.start(); err != nil {
+		_ = conn.Close()
+		s.establishEndFailed(es, err)
+		return
+	}
+	if err := session.lockState(stateStarted, false); err != nil {
+		s.establishEndFailed(es, err)
+		return
+	}
+
+	// 锁定状态, 若失败, 连接建立失败.
+	if err := s.lockState(stateStarted, false); err != nil {
+		session.unlockState(false)
+		session.close(err)
+		s.establishEndFailed(es, err)
+		return
+	}
+
+	// 连接建立成功.
+	s.sessions.add(session)
+	session.unlockState(false)
+	s.establishments.CompareAndDelete(es.remoteNodeId, es)
+	s.unlockState(false)
+	es.end(session, nil)
 }
 
 // 建立 session 相关状态.

@@ -58,6 +58,6 @@ func lfdPassiveState(state int8) zap.Field {
 	return zap.Int8("passiveState", state)
 }
 
-func lfdActive(active bool) zap.Field {
-	return zap.Bool("active", active)
+func lfdActiveEnd(activeEnd bool) zap.Field {
+	return zap.Bool("activeEnd", activeEnd)
 }
