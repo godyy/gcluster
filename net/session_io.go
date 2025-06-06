@@ -14,16 +14,16 @@ import (
 
 // sessionPacketReadWriter 实现数据包的读写功能.
 type sessionPacketReadWriter struct {
-	sm          sessionManagerImpl // Session 管理器.
+	svc         *Service           // Service.
 	readBuffer  *bytes.FixedBuffer // 读取缓冲区.
 	writeBuffer *bytes.FixedBuffer // 发送缓冲区.
 }
 
 // newSessionPacketReadWriter 创建 sessionPacketReadWriter.
-func newSessionPacketReadWriter(sm sessionManagerImpl) *sessionPacketReadWriter {
-	sc := sm.getSessionConfig()
+func newSessionPacketReadWriter(svc *Service) *sessionPacketReadWriter {
+	sc := svc.getSessionConfig()
 	return &sessionPacketReadWriter{
-		sm:          sm,
+		svc:         svc,
 		readBuffer:  bytes.NewFixedBuffer(sc.ReadBufSize),
 		writeBuffer: bytes.NewFixedBuffer(sc.WriteBufSize),
 	}
@@ -31,7 +31,7 @@ func newSessionPacketReadWriter(sm sessionManagerImpl) *sessionPacketReadWriter 
 
 // readToBuffer 读取数据到缓冲区.
 func (rw *sessionPacketReadWriter) readToBuffer(cr gnet.ConnReader) error {
-	if err := cr.SetReadDeadline(time.Now().Add(rw.sm.getSessionConfig().ReadWriteTimeout)); err != nil {
+	if err := cr.SetReadDeadline(time.Now().Add(rw.svc.getSessionConfig().ReadWriteTimeout)); err != nil {
 		return pkgerrors.WithMessage(err, "set read deadline")
 	}
 	_, err := rw.readBuffer.ReadFrom(cr)
@@ -79,7 +79,7 @@ func (rw *sessionPacketReadWriter) SessionReadPacket(cr gnet.ConnReader) (gnet.P
 
 // writeFromBuffer 从缓冲区发送数据.
 func (rw *sessionPacketReadWriter) writeFromBuffer(cw gnet.ConnWriter) error {
-	if err := cw.SetWriteDeadline(time.Now().Add(rw.sm.getSessionConfig().ReadWriteTimeout)); err != nil {
+	if err := cw.SetWriteDeadline(time.Now().Add(rw.svc.getSessionConfig().ReadWriteTimeout)); err != nil {
 		return pkgerrors.WithMessage(err, "set writeFull deadline")
 	}
 	for rw.writeBuffer.Readable() > 0 {
@@ -124,7 +124,7 @@ func (rw *sessionPacketReadWriter) SessionWritePacket(cw gnet.ConnWriter, p gnet
 
 	// 若是 Raw 数据包, 执行回收逻辑.
 	if pp.protoType() == protoTypeRaw {
-		defer rw.sm.putRawPacket(pp.(*RawPacket))
+		defer rw.svc.putRawPacket(pp.(*RawPacket))
 	}
 
 	// head.
@@ -191,10 +191,10 @@ func sessionReadPacketCloseResp(rw *sessionPacketReadWriter, cr gnet.ConnReader,
 
 // sessionReadPacketRaw 读取 Raw 数据包.
 func sessionReadPacketRaw(rw *sessionPacketReadWriter, cr gnet.ConnReader, payloadLen uint32) (gnet.Packet, error) {
-	if payloadLen > uint32(rw.sm.getSessionConfig().MaxPacketLength) {
+	if payloadLen > uint32(rw.svc.getSessionConfig().MaxPacketLength) {
 		return nil, fmt.Errorf("session read raw packet, packet length %d over limited", payloadLen)
 	}
-	p := rw.sm.getRawPacket(int(payloadLen))
+	p := rw.svc.getRawPacket(int(payloadLen))
 	if err := rw.readFull(cr, p.Data()); err != nil {
 		return nil, pkgerrors.WithMessage(err, "session read raw packet body")
 	}

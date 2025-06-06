@@ -2,6 +2,7 @@ package net
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 
@@ -66,13 +67,20 @@ func (c *ServiceConfig) init() error {
 // Session 可由本地发起，也可由远端发起. 若两端同时发起 Session, 最终只会保
 // 留最先建立的 Session 进行通信.
 type Service struct {
-	sessionManager
 	cfg            *ServiceConfig // 服务配置.
+	sessionHandler SessionHandler // Session 事件处理器.
+	pm             PacketManager  // 数据包管理器, 可选.
 	listener       net.Listener   // 网络监听器.
-	establishments *sync.Map      // 正在建立的 Session.
+	rootLogger     glog.Logger    // 根日志工具, 所有其它日志工具均是从其复制而来.
+	logger         glog.Logger    // 日志工具.
+
+	mutex          sync.RWMutex // RWMutex for following.
+	state          int8         // 状态
+	sessions       *sessionMap  // 已联通的 Session.
+	establishments *sync.Map    // 正在建立的 Session.
 }
 
-func CreateService(cfg *ServiceConfig, sessionHandler SessionHandler, options ...SessionManagerOption) (*Service, error) {
+func CreateService(cfg *ServiceConfig, sessionHandler SessionHandler, options ...ServiceOption) (*Service, error) {
 	if err := cfg.init(); err != nil {
 		return nil, err
 	}
@@ -82,11 +90,10 @@ func CreateService(cfg *ServiceConfig, sessionHandler SessionHandler, options ..
 	}
 
 	s := &Service{
-		sessionManager: newSessionManager(
-			cfg.Dialer,
-			sessionHandler,
-		),
 		cfg:            cfg,
+		sessionHandler: sessionHandler,
+		state:          stateInit,
+		sessions:       newSessionMap(),
 		establishments: &sync.Map{},
 	}
 
@@ -102,28 +109,6 @@ func CreateService(cfg *ServiceConfig, sessionHandler SessionHandler, options ..
 	s.initLogger()
 
 	return s, nil
-}
-
-// Start 启动 Service.
-func (s *Service) Start() error {
-	return s.start(func() error {
-		listener, err := s.cfg.ListenerCreator(s.cfg.Addr)
-		if err != nil {
-			return pkgerrors.WithMessage(err, "create listener")
-		}
-		s.listener = listener
-		go s.listen()
-		return nil
-	})
-}
-
-// Close 关闭 Service.
-func (s *Service) Close() error {
-	return s.close(func() {
-		if s.listener != nil {
-			_ = s.listener.Close()
-		}
-	})
 }
 
 // NodeId Service 的节点ID.
@@ -147,6 +132,13 @@ func (s *Service) getSessionConfig() *SessionConfig {
 	return &s.cfg.Session
 }
 
+// getState 返回 Service 状态.
+func (s *Service) getState() int8 {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.state
+}
+
 // isClosed 返回 Service 是否关闭.
 func (s *Service) isClosed() bool {
 	return s.getState() >= stateClosed
@@ -167,4 +159,137 @@ func (s *Service) initLogger() {
 func (s *Service) setLogger(logger glog.Logger) {
 	s.setRootLogger(logger)
 	s.logger = s.rootLogger.Named("Service").WithFields(lfdNodeId(s.cfg.NodeId))
+}
+
+// initRootLogger 初始化根日志工具.
+func (s *Service) initRootLogger() {
+	if s.rootLogger != nil {
+		return
+	}
+	s.rootLogger = createStdLogger(glog.DebugLevel)
+}
+
+// setRootLogger 设置根日志工具.
+func (s *Service) setRootLogger(logger glog.Logger) {
+	s.rootLogger = logger
+}
+
+// lockState 锁定状态.
+func (s *Service) lockState(need int8, read bool) error {
+	if read {
+		s.mutex.RLock()
+	} else {
+		s.mutex.Lock()
+	}
+
+	state := s.state
+	if state == need {
+		return nil
+	}
+
+	if read {
+		s.mutex.RUnlock()
+	} else {
+		s.mutex.Unlock()
+	}
+
+	switch state {
+	case stateInit:
+		return ErrServiceNotStarted
+	case stateStarted:
+		return ErrServiceStarted
+	case stateClosed:
+		return ErrServiceClosed
+	default:
+		panic(fmt.Sprintf("invalid session manager state %d", state))
+	}
+}
+
+// unlockState 解锁状态.
+func (s *Service) unlockState(read bool) {
+	if read {
+		s.mutex.RUnlock()
+	} else {
+		s.mutex.Unlock()
+	}
+}
+
+// Start 启动 Service.
+func (s *Service) Start() error {
+	if err := s.lockState(stateInit, false); err != nil {
+		return err
+	}
+	defer s.unlockState(false)
+
+	// 创建网络监听器.
+	listener, err := s.cfg.ListenerCreator(s.cfg.Addr)
+	if err != nil {
+		return pkgerrors.WithMessage(err, "create listener")
+	}
+	s.listener = listener
+	go s.listen()
+
+	// 更新状态.
+	s.state = stateStarted
+	s.logger.Info("started")
+	return nil
+}
+
+// Close 关闭 Service.
+func (s *Service) Close() error {
+	if err := s.lockState(stateStarted, false); err != nil {
+		return err
+	}
+	s.state = stateClosed
+	s.unlockState(false)
+
+	// 关闭监听器.
+	if s.listener != nil {
+		_ = s.listener.Close()
+	}
+
+	// 关闭所有已建立的连接.
+	s.sessions.close(ErrServiceClosed)
+
+	s.logger.Info("closed")
+	return nil
+}
+
+// GetSession 获取连接 nodeId 指向 Service 的 Session.
+func (s *Service) GetSession(nodeId string) Session {
+	if err := s.lockState(stateStarted, true); err != nil {
+		return nil
+	}
+	defer s.unlockState(true)
+
+	if session := s.sessions.get(nodeId); session != nil && session.keepActive() == nil {
+		return session
+	}
+
+	return nil
+}
+
+// onSessionPacket 处理 Session 数据包.
+func (s *Service) onSessionPacket(session Session, p *RawPacket) error {
+	return s.sessionHandler.OnSessionPacket(session, p)
+}
+
+// onSessionClosed 处理 Session 关闭.
+func (s *Service) onSessionClosed(session Session, err error) {
+	s.sessions.compareAndDelete(session)
+}
+
+// getRawPacket 获取 RawPacket.
+func (s *Service) getRawPacket(size int) *RawPacket {
+	if s.pm != nil {
+		return s.pm.GetRawPacket(size)
+	}
+	return NewRawPacketWithSize(size)
+}
+
+// putRawPacket 回收 RawPacket.
+func (s *Service) putRawPacket(p *RawPacket) {
+	if s.pm != nil {
+		s.pm.PutRawPacket(p)
+	}
 }

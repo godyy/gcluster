@@ -79,66 +79,6 @@ func (a *Agent) OnSessionPacket(session net.Session, p *net.RawPacket) error {
 	return a.handler.OnNodePacket(session.RemoteNodeId(), p)
 }
 
-// ClientConfig 客户端配置.
-type ClientConfig struct {
-	// Center 数据中心.
-	Center center.Center
-
-	// Net 网络配置.
-	Net *net.ClientConfig
-
-	// Handler 处理器.
-	Handler AgentHandler
-}
-
-func (c *ClientConfig) init() error {
-	if c == nil {
-		return errors.New("ClientConfig nil")
-	}
-
-	if c.Center == nil {
-		return errors.New("ClientConfig.Center not specified")
-	}
-
-	if c.Net == nil {
-		return errors.New("ClientConfig.Net not specified")
-	}
-
-	if c.Handler == nil {
-		return errors.New("ClientConfig.Handler not specified")
-	}
-
-	return nil
-}
-
-// CreateClient 创建 client 端 Agent.
-func CreateClient(cfg *ClientConfig, options ...Option,
-) (*Agent, error) {
-
-	if err := cfg.init(); err != nil {
-		return nil, err
-	}
-
-	var optSet optionSet
-	for _, opt := range options {
-		opt(&optSet)
-	}
-
-	agent := &Agent{
-		center:  cfg.Center,
-		handler: cfg.Handler,
-	}
-
-	sessionMgr, err := net.CreateClient(cfg.Net, agent, optSet.smOptions...)
-	if err != nil {
-		return nil, err
-	}
-
-	agent.sessionMgr = sessionMgr
-
-	return agent, nil
-}
-
 // ServiceConfig 服务配置.
 type ServiceConfig struct {
 	// Center 数据中心.

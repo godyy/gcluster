@@ -63,12 +63,12 @@ func (c *SessionConfig) init() error {
 
 // session 网络会话.
 type session struct {
-	sm             sessionManagerImpl // Session 管理器.
-	remoteNodeId   string             // 远端节点ID.
-	activeEnd      bool               // 是否主动的一端（需要发送心跳请求）.
-	pendingPackets chan packet        // 待发送数据包队列.
-	lastActiveTime int64              // 最近一次活跃的时间（发送/接收消息）.
-	logger         glog.Logger        // 日志工具.
+	svc            *Service    // Service.
+	remoteNodeId   string      // 远端节点ID.
+	activeEnd      bool        // 是否主动的一端（需要发送心跳请求）.
+	pendingPackets chan packet // 待发送数据包队列.
+	lastActiveTime int64       // 最近一次活跃的时间（发送/接收消息）.
+	logger         glog.Logger // 日志工具.
 
 	mutex    sync.RWMutex  // RWMutex for following.
 	state    int8          // 状态.
@@ -77,18 +77,18 @@ type session struct {
 }
 
 // newSession 构造 session.
-func newSession(sm sessionManagerImpl, remoteNodeId string, activeEnd bool, conn net.Conn, logger glog.Logger) *session {
+func newSession(svc *Service, remoteNodeId string, activeEnd bool, conn net.Conn, logger glog.Logger) *session {
 	s := &session{
 		remoteNodeId:   remoteNodeId,
-		sm:             sm,
+		svc:            svc,
 		activeEnd:      activeEnd,
-		pendingPackets: make(chan packet, sm.getSessionConfig().PendingPacketQueueSize),
+		pendingPackets: make(chan packet, svc.getSessionConfig().PendingPacketQueueSize),
 		state:          stateInit,
 		chClosed:       make(chan struct{}),
 		logger:         logger.Named("session").WithFields(lfdRemoteNodeId(remoteNodeId), lfdActiveEnd(activeEnd)),
 	}
 
-	packetReadWriter := newSessionPacketReadWriter(sm)
+	packetReadWriter := newSessionPacketReadWriter(svc)
 	s.core = gnet.NewSession(conn, packetReadWriter, packetReadWriter, s)
 
 	return s
@@ -195,12 +195,12 @@ func (s *session) closeBaseLocked(err error, locked bool) {
 	s.logger.InfoFields("closed", lfdError(err))
 
 	// 通知 Service session 关闭.
-	s.sm.onSessionClosed(s, err)
+	s.svc.onSessionClosed(s, err)
 }
 
 // tick session 生命周期逻辑.
 func (s *session) tick() {
-	heartbeatTicker := time.NewTicker(s.sm.getSessionConfig().HeartbeatInterval)
+	heartbeatTicker := time.NewTicker(s.svc.getSessionConfig().HeartbeatInterval)
 
 	closed := false
 	for !closed {
@@ -258,7 +258,7 @@ func (s *session) send(ctx context.Context, p packet, refreshActiveTime bool) er
 		return errors.New("packet nil")
 	}
 
-	if len(p.Data()) > s.sm.getSessionConfig().MaxPacketLength {
+	if len(p.Data()) > s.svc.getSessionConfig().MaxPacketLength {
 		return ErrPacketLengthOverflow
 	}
 
@@ -314,7 +314,7 @@ func (s *session) refreshActiveTime() {
 
 // inactive 返回 session 是否失效.
 func (s *session) inactive() bool {
-	return time.Duration(time.Now().UnixNano()-atomic.LoadInt64(&s.lastActiveTime)) >= s.sm.getSessionConfig().InactiveTimeout
+	return time.Duration(time.Now().UnixNano()-atomic.LoadInt64(&s.lastActiveTime)) >= s.svc.getSessionConfig().InactiveTimeout
 }
 
 // SessionPendingPacket 实现 gnet.SessionHandler. 返回待发送的数据包.
@@ -355,21 +355,21 @@ func (s *session) SessionOnClosed(_ *gnet.Session, err error) {
 // 为了便于使用同一套工作流通信，对本地会话做一套封装，
 // 便于向本地发送数据，实现数据转发.
 type sessionLocal struct {
-	manager sessionManagerImpl
+	svc *Service
 }
 
-func newSessionLocal(manager sessionManagerImpl) *sessionLocal {
+func newSessionLocal(svc *Service) *sessionLocal {
 	return &sessionLocal{
-		manager: manager,
+		svc: svc,
 	}
 }
 
 func (s *sessionLocal) RemoteNodeId() string {
-	return s.manager.NodeId()
+	return s.svc.NodeId()
 }
 
 func (s *sessionLocal) SendRaw(_ context.Context, p *RawPacket) error {
-	return s.manager.onSessionPacket(s, p)
+	return s.svc.onSessionPacket(s, p)
 }
 
 func (s *sessionLocal) close(_ error) {}

@@ -59,9 +59,10 @@ func (t *testAgentHandler) OnNodePacket(remoteNodeId string, packet *net.RawPack
 }
 
 func TestAgent(t *testing.T) {
-	clientId := "client1"
-	serviceId := "service1"
-	serviceAddr := ":50001"
+	serviceId1 := "service1"
+	serviceId2 := "service2"
+	serviceAddr1 := ":50001"
+	serviceAddr2 := ":50002"
 
 	logger := glog.NewLogger(&glog.Config{
 		Level:        glog.DebugLevel,
@@ -73,8 +74,12 @@ func TestAgent(t *testing.T) {
 
 	center := &testCenter{nodes: make(map[string]*testNode)}
 	center.addNode(&testNode{
-		nodeId: serviceId,
-		addr:   serviceAddr,
+		nodeId: serviceId1,
+		addr:   serviceAddr1,
+	})
+	center.addNode(&testNode{
+		nodeId: serviceId2,
+		addr:   serviceAddr2,
 	})
 
 	sessionConfig := net.SessionConfig{
@@ -94,27 +99,9 @@ func TestAgent(t *testing.T) {
 		return stdnet.Listen("tcp", addr)
 	}
 
-	clientConfig := &net.ClientConfig{
-		NodeId: clientId,
-		Handshake: net.HandshakeConfig{
-			Token:   "123",
-			Timeout: 5 * time.Second,
-		},
-		Session: sessionConfig,
-		Dialer:  dialer,
-	}
-	client, err := CreateClient(&ClientConfig{
-		Center:  center,
-		Net:     clientConfig,
-		Handler: &testAgentHandler{},
-	}, WithLogger(logger))
-	if err != nil {
-		t.Fatal("create client: ", err)
-	}
-
-	serviceConfig := &net.ServiceConfig{
-		NodeId: serviceId,
-		Addr:   serviceAddr,
+	service1Config := &net.ServiceConfig{
+		NodeId: serviceId1,
+		Addr:   serviceAddr1,
 		Handshake: net.HandshakeConfig{
 			Token:   "123",
 			Timeout: 5 * time.Second,
@@ -123,33 +110,53 @@ func TestAgent(t *testing.T) {
 		Dialer:          dialer,
 		ListenerCreator: createListener,
 	}
-	service, err := CreateService(&ServiceConfig{
+	service1, err := CreateService(&ServiceConfig{
 		Center:  center,
-		Net:     serviceConfig,
+		Net:     service1Config,
+		Handler: &testAgentHandler{},
+	}, WithLogger(logger))
+	if err != nil {
+		t.Fatal("create service1: ", err)
+	}
+
+	service2Config := &net.ServiceConfig{
+		NodeId: serviceId2,
+		Addr:   serviceAddr2,
+		Handshake: net.HandshakeConfig{
+			Token:   "123",
+			Timeout: 5 * time.Second,
+		},
+		Session:         sessionConfig,
+		Dialer:          dialer,
+		ListenerCreator: createListener,
+	}
+	service2, err := CreateService(&ServiceConfig{
+		Center:  center,
+		Net:     service2Config,
 		Handler: &testAgentHandler{},
 	}, WithLogger(logger))
 	if err != nil {
 		t.Fatal("create service: ", err)
 	}
 
-	if err := client.Start(); err != nil {
-		t.Fatal("start client agent: ", err)
+	if err := service1.Start(); err != nil {
+		t.Fatal("start service1 agent: ", err)
 	}
-	if err := service.Start(); err != nil {
-		t.Fatal("start service agent: ", err)
+	if err := service2.Start(); err != nil {
+		t.Fatal("start service2 agent: ", err)
 	}
 
-	if _, err := client.ConnectNode(serviceId); err != nil {
-		t.Fatal("client connect service: ", err)
+	if _, err := service1.ConnectNode(serviceId2); err != nil {
+		t.Fatal("service1 connect service2: ", err)
 	}
 
 	time.Sleep(5 * time.Second)
 
-	if err := client.Close(); err != nil {
-		t.Fatal("close client agent: ", err)
+	if err := service1.Close(); err != nil {
+		t.Fatal("close service1 agent: ", err)
 	}
-	if err := service.Close(); err != nil {
-		t.Fatal("close service agent: ", err)
+	if err := service2.Close(); err != nil {
+		t.Fatal("close service2 agent: ", err)
 	}
 }
 

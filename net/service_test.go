@@ -112,11 +112,11 @@ func TestServiceConnect(t *testing.T) {
 		ListenerCreator: createListener,
 	}
 
-	s1, err := CreateService(s1Cfg, testHandler, WithLogger(logger))
+	s1, err := CreateService(s1Cfg, testHandler, WithServiceLogger(logger))
 	if err != nil {
 		t.Fatalf("create service 1, %v", err)
 	}
-	s2, err := CreateService(s2Cfg, testHandler, WithLogger(logger))
+	s2, err := CreateService(s2Cfg, testHandler, WithServiceLogger(logger))
 	if err != nil {
 		t.Fatalf("create service 2, %v", err)
 	}
@@ -229,7 +229,7 @@ func TestServiceSession(t *testing.T) {
 			wg.Done()
 			return nil
 		},
-	}, WithLogger(logger))
+	}, WithServiceLogger(logger))
 	if err != nil {
 		t.Fatalf("create service 1, %v", err)
 	}
@@ -240,7 +240,7 @@ func TestServiceSession(t *testing.T) {
 			wg.Done()
 			return nil
 		},
-	}, WithLogger(logger))
+	}, WithServiceLogger(logger))
 	if err != nil {
 		t.Fatalf("create service 2, %v", err)
 	}
@@ -402,7 +402,7 @@ func TestServiceConcurrentConnect(t *testing.T) {
 			ListenerCreator: createListener,
 		}
 
-		s, err := CreateService(serviceCfg, handler, WithLogger(logger))
+		s, err := CreateService(serviceCfg, handler, WithServiceLogger(logger))
 		if err != nil {
 			t.Fatalf("create service %d: %s", i, err)
 		}

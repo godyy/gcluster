@@ -15,8 +15,29 @@ import (
 // 只会同时存在一个 Session，谁先建立成功谁就得到保留。
 
 // Connect 连接指定节点.
-func (s *Service) Connect(nodeId string, addr string) (Session, error) {
-	return s.connect(nodeId, addr, s.onConnect)
+func (s *Service) Connect(nodeId string, addr string) (session Session, err error) {
+	session = s.GetSession(nodeId)
+	if session != nil {
+		return
+	}
+
+	if err := s.lockState(stateStarted, true); err != nil {
+		return nil, err
+	}
+	establishment := s.getOrCreateEstablishment(nodeId)
+	s.unlockState(true)
+	s.startActiveEstablish(establishment, addr)
+	session, err = establishment.wait()
+	if err == nil {
+		return
+	}
+
+	session = s.GetSession(nodeId)
+	if session != nil {
+		err = nil
+	}
+
+	return
 }
 
 func (s *Service) onConnect(nodeId, addr string) (Session, error) {
@@ -173,7 +194,7 @@ func (s *Service) startActiveEstablish(es *establishment, remoteAddr string) boo
 func (s *Service) activeEstablishConnect(es *establishment, remoteAddr string) {
 
 	// 发起连接.
-	conn, err := s.dialer(remoteAddr)
+	conn, err := s.cfg.Dialer(remoteAddr)
 	if err != nil {
 		s.logger.ErrorFields("connect remote failed",
 			lfdRemoteAddr(remoteAddr),

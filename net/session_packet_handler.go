@@ -80,5 +80,5 @@ func sessionHandleRaw(s *session, p *RawPacket) error {
 	s.mutex.RLock()
 	s.refreshActiveTime()
 	s.mutex.RUnlock()
-	return s.sm.onSessionPacket(s, p)
+	return s.svc.onSessionPacket(s, p)
 }
