@@ -73,7 +73,7 @@ func TestServiceConnect(t *testing.T) {
 		MaxPacketLength:        1024,
 		ReadWriteTimeout:       60 * time.Second,
 		HeartbeatInterval:      1 * time.Second,
-		InactiveTimeout:        5 * time.Minute,
+		InactiveTimeout:        5 * time.Second,
 		ReadBufSize:            10 * 1024,
 		WriteBufSize:           10 * 1024,
 	}
@@ -135,7 +135,7 @@ func TestServiceConnect(t *testing.T) {
 		t.Fatal("node1 connect node2", err)
 	}
 
-	time.Sleep(6 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	_ = s1.Close()
 	_ = s2.Close()

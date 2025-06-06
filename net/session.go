@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"net"
 	"sync"
@@ -13,9 +12,6 @@ import (
 
 	"github.com/godyy/glog"
 	"github.com/godyy/gnet"
-	"github.com/godyy/gutils/buffer"
-	"github.com/godyy/gutils/buffer/bytes"
-	pkgerrors "github.com/pkg/errors"
 )
 
 // SessionConfig Session 配置
@@ -167,45 +163,18 @@ func (s *session) start() error {
 	return nil
 }
 
-// tick session 生命周期逻辑.
-func (s *session) tick() {
-	heartbeatTicker := time.NewTicker(s.sm.getSessionConfig().HeartbeatInterval)
-
-	closed := false
-	for !closed {
-		select {
-		case <-heartbeatTicker.C:
-			s.tickHeartbeat()
-		case <-s.chClosed:
-			closed = true
-		}
-	}
-
-	heartbeatTicker.Stop()
-}
-
-// tickHeartbeat 心跳周期逻辑.
-func (s *session) tickHeartbeat() {
-	// 发起方负责发送心跳.
-	// 被发起方负责处理失效逻辑.
-
-	if s.active {
-		s.logger.Debug("send heartbeat")
-		p := &heartbeatPacket{}
-		p.setPing()
-		if err := s.send(context.Background(), p, false); err != nil {
-			s.logger.ErrorFields("send heartbeat", lfdError(err))
-		}
-	} else if time.Duration(time.Now().UnixNano()-atomic.LoadInt64(&s.lastActiveTime)) >= s.sm.getSessionConfig().InactiveTimeout {
-		s.logger.Debug("inactive timeout")
-		s.close(ErrInactiveClosed)
-	}
-}
-
 // close 关闭会话.
 func (s *session) close(err error) {
-	if err := s.lockState(stateStarted, false); err != nil {
-		return
+	s.closeBaseLocked(err, false)
+}
+
+// closeBaseLocked 基于是否已锁定状态关闭会话.
+func (s *session) closeBaseLocked(err error, locked bool) {
+	// 若未锁定状态，则先锁定.
+	if !locked {
+		if err := s.lockState(stateStarted, false); err != nil {
+			return
+		}
 	}
 
 	// 保证重入时逻辑的正确性，优先更新状态.
@@ -236,6 +205,57 @@ func (s *session) isClosed() bool {
 	return s.state == stateClosed
 }
 
+// tick session 生命周期逻辑.
+func (s *session) tick() {
+	heartbeatTicker := time.NewTicker(s.sm.getSessionConfig().HeartbeatInterval)
+
+	closed := false
+	for !closed {
+		select {
+		case <-heartbeatTicker.C:
+			s.tickHeartbeat()
+		case <-s.chClosed:
+			closed = true
+		}
+	}
+
+	heartbeatTicker.Stop()
+}
+
+// tickHeartbeat 心跳周期逻辑.
+func (s *session) tickHeartbeat() {
+	if s.active {
+		// 发起方负责发送心跳.
+
+		s.logger.Debug("send heartbeat")
+		p := &heartbeatPacket{}
+		p.setPing()
+		if err := s.send(context.Background(), p, false); err != nil {
+			s.logger.ErrorFields("send heartbeat", lfdError(err))
+		}
+	} else {
+		// 被连接方负责处理失效逻辑.
+
+		// 锁定状态.
+		if err := s.lockState(stateStarted, true); err != nil {
+			return
+		}
+		defer s.unlockState(true)
+
+		// 若会话仍有效, 中断.
+		if !s.inactive() {
+			return
+		}
+
+		// 发送关闭请求.
+		if err := s.sendDirect(context.Background(), &closeReqPacket{}, false); err != nil {
+			s.logger.ErrorFields("send close req", lfdError(err))
+		} else {
+			s.logger.Debug("send close req")
+		}
+	}
+}
+
 // send 发送数据底层接口.
 func (s *session) send(ctx context.Context, p packet, refreshActiveTime bool) error {
 	if ctx == nil {
@@ -254,6 +274,11 @@ func (s *session) send(ctx context.Context, p packet, refreshActiveTime bool) er
 	}
 	defer s.unlockState(true)
 
+	return s.sendDirect(ctx, p, refreshActiveTime)
+}
+
+// sendDirect 直接发送数据包.
+func (s *session) sendDirect(ctx context.Context, p packet, refreshActiveTime bool) error {
 	select {
 	case s.pendingPackets <- p:
 		if refreshActiveTime {
@@ -283,6 +308,11 @@ func (s *session) refreshActiveTime() {
 	}
 }
 
+// inactive 返回 session 是否失效.
+func (s *session) inactive() bool {
+	return time.Duration(time.Now().UnixNano()-atomic.LoadInt64(&s.lastActiveTime)) >= s.sm.getSessionConfig().InactiveTimeout
+}
+
 // SessionPendingPacket 实现 gnet.SessionHandler. 返回待发送的数据包.
 func (s *session) SessionPendingPacket() (p gnet.Packet, more bool, err error) {
 	select {
@@ -299,34 +329,17 @@ func (s *session) SessionPendingPacket() (p gnet.Packet, more bool, err error) {
 
 // SessionOnPacket 实现 gnet.SessionHandler. 接收数据包回调.
 func (s *session) SessionOnPacket(_ *gnet.Session, p gnet.Packet) error {
-	switch p := p.(type) {
-	case *heartbeatPacket:
-		return s.handleHeartbeat(p)
-	case *RawPacket:
-		return s.handleRaw(p)
-	default:
-		panic(fmt.Sprintf("session on packet, unknown packet type %T", p))
-	}
-}
-
-// handleHeartbeat 处理心跳.
-func (s *session) handleHeartbeat(p *heartbeatPacket) error {
-	ping := p.ping()
-	if ping {
-		s.logger.Debug("handle ping")
-		p.setPong()
-		return s.send(context.Background(), p, false)
-	} else {
-		s.logger.Debug("receive pong")
+	pp, ok := p.(packet)
+	if !ok {
+		return fmt.Errorf("session on packet, unknown packet type %T", p)
 	}
 
-	return nil
-}
+	handler, exists := sessionPacketHandlers[pp.protoType()]
+	if !exists {
+		return fmt.Errorf("session on packet, unknown proto-type %d", pp.protoType())
+	}
 
-// handleRaw 处理数据包.
-func (s *session) handleRaw(p *RawPacket) error {
-	s.refreshActiveTime()
-	return s.sm.onSessionPacket(s, p)
+	return handler(s, pp)
 }
 
 // SessionOnClosed 实现 gnet.SessionHandler. 连接关闭回调.
@@ -358,154 +371,3 @@ func (s *sessionLocal) SendRaw(_ context.Context, p *RawPacket) error {
 func (s *sessionLocal) close(_ error) {}
 
 func (s *sessionLocal) isClosed() bool { return false }
-
-// sessionPacketReadWriter 实现数据包的读写功能.
-type sessionPacketReadWriter struct {
-	sm          sessionManagerImpl // Session 管理器.
-	readBuffer  *bytes.FixedBuffer // 读取缓冲区.
-	writeBuffer *bytes.FixedBuffer // 发送缓冲区.
-}
-
-// newSessionPacketReadWriter 创建 sessionPacketReadWriter.
-func newSessionPacketReadWriter(sm sessionManagerImpl) *sessionPacketReadWriter {
-	sc := sm.getSessionConfig()
-	return &sessionPacketReadWriter{
-		sm:          sm,
-		readBuffer:  bytes.NewFixedBuffer(sc.ReadBufSize),
-		writeBuffer: bytes.NewFixedBuffer(sc.WriteBufSize),
-	}
-}
-
-// readToBuffer 读取数据到缓冲区.
-func (rw *sessionPacketReadWriter) readToBuffer(cr gnet.ConnReader) error {
-	if err := cr.SetReadDeadline(time.Now().Add(rw.sm.getSessionConfig().ReadWriteTimeout)); err != nil {
-		return pkgerrors.WithMessage(err, "set read deadline")
-	}
-	_, err := rw.readBuffer.ReadFrom(cr)
-	return err
-}
-
-// readFull 自 cr 读取足够 p 长度的数据.
-func (rw *sessionPacketReadWriter) readFull(cr gnet.ConnReader, p []byte) error {
-	for len(p) > 0 {
-		n, err := rw.readBuffer.Read(p)
-		if n > 0 {
-			p = p[n:]
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				if err := rw.readToBuffer(cr); err != nil {
-					return err
-				}
-				continue
-			}
-			return err
-		}
-	}
-	return nil
-}
-
-// SessionReadPacket 实现 gnet.SessionPacketReadWriter.
-func (rw *sessionPacketReadWriter) SessionReadPacket(cr gnet.ConnReader) (gnet.Packet, error) {
-	// head.
-	var head packetHead
-	if err := rw.readFull(cr, head[:]); err != nil {
-		return nil, pkgerrors.WithMessage(err, "session read packet head")
-	}
-	protoType := head.protoType()
-	payloadLen := head.payloadLen()
-
-	// payload.
-	switch protoType {
-	case protoTypeHeartbeat:
-		if payloadLen != heartbeatPacketLength {
-			return nil, fmt.Errorf("session read packet, heartbeat packet length %d wrong", payloadLen)
-		}
-		p := &heartbeatPacket{}
-		if err := rw.readFull(cr, p[:]); err != nil {
-			return nil, pkgerrors.WithMessage(err, "session read heartbeat packet payload")
-		}
-		return p, nil
-	case protoTypeRaw:
-		if payloadLen > uint32(rw.sm.getSessionConfig().MaxPacketLength) {
-			return nil, fmt.Errorf("session read raw packet, packet length %d over limited", payloadLen)
-		}
-		p := rw.sm.getRawPacket(int(payloadLen))
-		if err := rw.readFull(cr, p.Data()); err != nil {
-			return nil, pkgerrors.WithMessagef(err, "session read packet body, proto-type \"%s\"", protoType)
-		}
-		return p, nil
-	default:
-		return nil, fmt.Errorf("session read packet, unknown proto-type %d", protoType)
-	}
-}
-
-// writeFromBuffer 从缓冲区发送数据.
-func (rw *sessionPacketReadWriter) writeFromBuffer(cw gnet.ConnWriter) error {
-	if err := cw.SetWriteDeadline(time.Now().Add(rw.sm.getSessionConfig().ReadWriteTimeout)); err != nil {
-		return pkgerrors.WithMessage(err, "set writeFull deadline")
-	}
-	for rw.writeBuffer.Readable() > 0 {
-		if _, err := rw.writeBuffer.WriteTo(cw); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// writeFull 将 p 通过 cw 完整的发送出去.
-func (rw *sessionPacketReadWriter) writeFull(cw gnet.ConnWriter, p []byte) error {
-	for len(p) > 0 {
-		n, err := rw.writeBuffer.Write(p)
-		if n > 0 {
-			p = p[n:]
-		}
-		if err != nil {
-			if errors.Is(err, buffer.ErrBufferFull) {
-				if err := rw.writeFromBuffer(cw); err != nil {
-					return err
-				}
-				continue
-			}
-			return err
-		}
-	}
-	return nil
-}
-
-// SessionWritePacket 实现 gnet.SessionPacketReadWriter.
-func (rw *sessionPacketReadWriter) SessionWritePacket(cw gnet.ConnWriter, p gnet.Packet, more bool) error {
-	pp, ok := p.(packet)
-	if !ok {
-		return fmt.Errorf("session write packet, unknown packet type %T", p)
-	}
-
-	switch pp.protoType() {
-	case protoTypeHeartbeat:
-	case protoTypeRaw:
-		defer rw.sm.putRawPacket(pp.(*RawPacket))
-	default:
-		return fmt.Errorf("session write packet, unknown proto-type %d", pp.protoType())
-	}
-
-	// head.
-	var head packetHead
-	head.setProtoType(pp.protoType())
-	head.setPayloadLen(uint32(len(pp.Data())))
-	if err := rw.writeFull(cw, head[:]); err != nil {
-		return pkgerrors.WithMessage(err, "session writeFull packet head")
-	}
-
-	// payload.
-	if err := rw.writeFull(cw, pp.Data()); err != nil {
-		return pkgerrors.WithMessage(err, "session writeFull packet payload")
-	}
-
-	if !more && rw.writeBuffer.Readable() > 0 {
-		if err := rw.writeFromBuffer(cw); err != nil {
-			return pkgerrors.WithMessage(err, "session writeFull from buffer")
-		}
-	}
-
-	return nil
-}

@@ -14,9 +14,11 @@ const (
 	protoTypeHSCompletedAck = protoType(4)  // 握手完成确认
 	protoTypeHSRejected     = protoType(5)  // 握手被拒绝
 	protoTypeHeartbeat      = protoType(10) // 心跳
+	protoTypeCloseReq       = protoType(11) // 关闭请求
+	protoTypeCloseResp      = protoType(12) // 关闭回复
 
 	// ==============================以下是用户协议===================================
-	protoTypeRaw = protoType(11) // 原生消息，由应用自行处理
+	protoTypeRaw = protoType(20) // 原生消息，由应用自行处理
 )
 
 // protoTypeStrings 协议类型字符串值.
@@ -28,9 +30,19 @@ var protoTypeStrings = map[protoType]string{
 	protoTypeHSCompletedAck: "Handshake Completed Ack",
 	protoTypeHSRejected:     "Handshake Rejected",
 	protoTypeHeartbeat:      "Heartbeat",
+	protoTypeCloseReq:       "Close Request",
+	protoTypeCloseResp:      "Close Response",
 	protoTypeRaw:            "Raw",
 }
 
 func (pt protoType) String() string {
 	return protoTypeStrings[pt]
+}
+
+// protoTypesForCommunicating 通信协议类型.
+var protoTypesForCommunicating = map[protoType]bool{
+	protoTypeHeartbeat: true,
+	protoTypeCloseReq:  true,
+	protoTypeCloseResp: true,
+	protoTypeRaw:       true,
 }

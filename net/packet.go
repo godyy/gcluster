@@ -56,6 +56,46 @@ func (p *heartbeatPacket) setPong() {
 	(*p)[0] = 0
 }
 
+// closeReqPacketLength 关闭请求数据包的长度.
+const closeReqPacketLength = 0
+
+// closeReqPacket 关闭请求数据包.
+type closeReqPacket []byte
+
+func (p *closeReqPacket) Data() []byte {
+	return nil
+}
+
+func (p *closeReqPacket) protoType() protoType {
+	return protoTypeCloseReq
+}
+
+// closeRespPacketLength 关闭回复数据包的长度.
+const closeRespPacketLength = 1
+
+// closeRespPacket 关闭回复数据包.
+type closeRespPacket [1]byte
+
+func (p *closeRespPacket) Data() []byte {
+	return (*p)[:]
+}
+
+func (p *closeRespPacket) protoType() protoType {
+	return protoTypeCloseResp
+}
+
+func (p *closeRespPacket) setPass(pass bool) {
+	if pass {
+		(*p)[0] = 1
+	} else {
+		(*p)[0] = 0
+	}
+}
+
+func (p *closeRespPacket) pass() bool {
+	return (*p)[0] != 0
+}
+
 // RawPacket 定义供用户使用的 Raw 数据包.
 type RawPacket struct {
 	gnet.Buffer
