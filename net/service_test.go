@@ -72,7 +72,8 @@ func TestServiceConnect(t *testing.T) {
 		PendingPacketQueueSize: 10,
 		MaxPacketLength:        1024,
 		ReadWriteTimeout:       60 * time.Second,
-		HeartbeatInterval:      1 * time.Second,
+		TickInterval:           1 * time.Second,
+		HeartbeatTimeout:       1 * time.Second,
 		InactiveTimeout:        5 * time.Second,
 		ReadBufSize:            10 * 1024,
 		WriteBufSize:           10 * 1024,
@@ -166,7 +167,8 @@ func TestServiceSession(t *testing.T) {
 		ReadBufSize:            10 * 1024,
 		WriteBufSize:           10 * 1024,
 		ReadWriteTimeout:       60 * time.Second,
-		HeartbeatInterval:      15 * time.Second,
+		TickInterval:           5 * time.Second,
+		HeartbeatTimeout:       15 * time.Second,
 		InactiveTimeout:        5 * time.Minute,
 	}
 
@@ -345,7 +347,8 @@ func TestServiceConcurrentConnect(t *testing.T) {
 		ReadBufSize:            64 * 1024,
 		WriteBufSize:           64 * 1024,
 		ReadWriteTimeout:       30 * time.Second,
-		HeartbeatInterval:      5 * time.Second,
+		TickInterval:           1 * time.Second,
+		HeartbeatTimeout:       5 * time.Second,
 		InactiveTimeout:        5 * time.Minute,
 	}
 
