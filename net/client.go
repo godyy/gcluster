@@ -277,7 +277,7 @@ func (c *Client) createSession(remoteNodeId string, conn net.Conn) (Session, err
 	if c.state >= stateClosed {
 		c.mutex.RUnlock()
 		_ = conn.Close()
-		return nil, ErrClosed
+		return nil, errors.New("client closed")
 	}
 
 	session := newSession(c, remoteNodeId, true, conn, c.rootLogger)

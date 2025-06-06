@@ -120,11 +120,11 @@ func (s *session) lockState(need int8, read bool) error {
 
 	switch state {
 	case stateInit:
-		return ErrNotStarted
+		return ErrSessionNotStarted
 	case stateStarted:
-		return ErrStarted
+		return ErrSessionStarted
 	case stateClosed:
-		return ErrClosed
+		return ErrSessionClosed
 	default:
 		panic(fmt.Sprintf("invalid session state %d", state))
 	}
@@ -279,7 +279,7 @@ func (s *session) sendDirect(ctx context.Context, p packet, refreshActiveTime bo
 		}
 		return nil
 	case <-s.chClosed:
-		return ErrClosed
+		return ErrSessionClosed
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -322,12 +322,12 @@ func (s *session) SessionPendingPacket() (p gnet.Packet, more bool, err error) {
 	select {
 	case p := <-s.pendingPackets:
 		if p == nil {
-			return nil, false, ErrClosed
+			return nil, false, ErrSessionClosed
 		} else {
 			return p, len(s.pendingPackets) > 0, nil
 		}
 	case <-s.chClosed:
-		return nil, false, ErrClosed
+		return nil, false, ErrSessionClosed
 	}
 }
 

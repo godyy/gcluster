@@ -173,11 +173,11 @@ func (sm *sessionManager) lockState(need int8, read bool) error {
 
 	switch state {
 	case stateInit:
-		return ErrNotStarted
+		return ErrServiceNotStarted
 	case stateStarted:
-		return ErrStarted
+		return ErrServiceStarted
 	case stateClosed:
-		return ErrClosed
+		return ErrServiceClosed
 	default:
 		panic(fmt.Sprintf("invalid session manager state %d", state))
 	}
@@ -221,7 +221,7 @@ func (sm *sessionManager) close(f func()) error {
 	if f != nil {
 		f()
 	}
-	sm.sessions.close(ErrClosed)
+	sm.sessions.close(ErrServiceClosed)
 
 	sm.logger.Info("closed")
 	return nil

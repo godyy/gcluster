@@ -4,14 +4,23 @@ import (
 	"errors"
 )
 
-// ErrStarted 已启动.
-var ErrStarted = errors.New("started")
+// ErrServiceNotStarted 服务未启动.
+var ErrServiceNotStarted = errors.New("service not started")
 
-// ErrNotStarted 未启动.
-var ErrNotStarted = errors.New("not started")
+// ErrServiceStarted 服务已启动.
+var ErrServiceStarted = errors.New("service started")
 
-// ErrClosed 已关闭.
-var ErrClosed = errors.New("closed")
+// ErrServiceClosed 服务已关闭.
+var ErrServiceClosed = errors.New("service closed")
+
+// ErrSessionNotStarted 会话未启动.
+var ErrSessionNotStarted = errors.New("session not started")
+
+// ErrSessionStarted 会话已启动.
+var ErrSessionStarted = errors.New("session started")
+
+// ErrSessionClosed 会话已关闭.
+var ErrSessionClosed = errors.New("session closed")
 
 // ErrInactiveClosed 因不活跃而关闭.
 var ErrInactiveClosed = errors.New("inactive closed")
