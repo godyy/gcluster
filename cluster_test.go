@@ -110,6 +110,7 @@ func TestAgent(t *testing.T) {
 		Session:         sessionConfig,
 		Dialer:          dialer,
 		ListenerCreator: createListener,
+		TimerSystem:     net.NewTimerHeap(),
 	}
 	service1, err := CreateService(&ServiceConfig{
 		Center:  center,
@@ -130,6 +131,7 @@ func TestAgent(t *testing.T) {
 		Session:         sessionConfig,
 		Dialer:          dialer,
 		ListenerCreator: createListener,
+		TimerSystem:     net.NewTimerHeap(),
 	}
 	service2, err := CreateService(&ServiceConfig{
 		Center:  center,
@@ -252,9 +254,11 @@ func TestConcurrentConnect(t *testing.T) {
 				Token:   "123",
 				Timeout: 60 * time.Second,
 			},
-			Session:         sessionCfg,
-			Dialer:          dialer,
-			ListenerCreator: createListener,
+			Session:                    sessionCfg,
+			Dialer:                     dialer,
+			ListenerCreator:            createListener,
+			TimerSystem:                net.NewTimerHeap(),
+			ExpectedConcurrentSessions: 1000,
 		}
 
 		s, err := CreateService(&ServiceConfig{

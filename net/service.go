@@ -29,6 +29,13 @@ type ServiceConfig struct {
 
 	// ListenerCreator 网络监听器构造器.
 	ListenerCreator ListenerCreator
+
+	// TimerSystem 定时器系统.
+	TimerSystem TimerSystem
+
+	// ExpectedConcurrentSessions 预期同时存在的 Session 数量.
+	// 默认值为 10.
+	ExpectedConcurrentSessions int
 }
 
 func (c *ServiceConfig) init() error {
@@ -60,6 +67,14 @@ func (c *ServiceConfig) init() error {
 		return errors.New("ServiceConfig.ListenerCreator not specified")
 	}
 
+	if c.TimerSystem == nil {
+		return errors.New("ServiceConfig.TimerSystem not specified")
+	}
+
+	if c.ExpectedConcurrentSessions <= 0 {
+		c.ExpectedConcurrentSessions = 10
+	}
+
 	return nil
 }
 
@@ -74,10 +89,12 @@ type Service struct {
 	rootLogger     glog.Logger    // 根日志工具, 所有其它日志工具均是从其复制而来.
 	logger         glog.Logger    // 日志工具.
 
-	mutex          sync.RWMutex // RWMutex for following.
-	state          int8         // 状态
-	sessions       *sessionMap  // 已联通的 Session.
-	establishments *sync.Map    // 正在建立的 Session.
+	mutex          sync.RWMutex  // RWMutex for following.
+	state          int8          // 状态
+	sessions       *sessionMap   // 已联通的 Session.
+	establishments *sync.Map     // 正在建立的 Session.
+	cTickSessions  chan string   // 需要 Tick 的 Session.
+	cClosed        chan struct{} // 已关闭信号.
 }
 
 func CreateService(cfg *ServiceConfig, sessionHandler SessionHandler, options ...ServiceOption) (*Service, error) {
@@ -95,6 +112,8 @@ func CreateService(cfg *ServiceConfig, sessionHandler SessionHandler, options ..
 		state:          stateInit,
 		sessions:       newSessionMap(),
 		establishments: &sync.Map{},
+		cTickSessions:  make(chan string, cfg.ExpectedConcurrentSessions),
+		cClosed:        make(chan struct{}),
 	}
 
 	// 本地会话
@@ -228,6 +247,7 @@ func (s *Service) Start() error {
 	}
 	s.listener = listener
 	go s.listen()
+	go s.loop()
 
 	// 更新状态.
 	s.state = stateStarted
@@ -291,5 +311,52 @@ func (s *Service) getRawPacket(size int) *RawPacket {
 func (s *Service) putRawPacket(p *RawPacket) {
 	if s.pm != nil {
 		s.pm.PutRawPacket(p)
+	}
+}
+
+// startSessionTicker 启动 Session Tick 定时器.
+func (s *Service) startSessionTicker(session Session) TimerId {
+	if err := s.lockState(stateStarted, true); err != nil {
+		return TimerIdNone
+	}
+	defer s.unlockState(true)
+
+	return s.cfg.TimerSystem.StartTimer(s.cfg.Session.TickInterval, true, session.RemoteNodeId(), s.onSessionTicker)
+}
+
+// onSessionTicker 处理 Session Tick 回调.
+func (s *Service) onSessionTicker(args *TimerArgs) {
+	if err := s.lockState(stateStarted, true); err != nil {
+		return
+	}
+	defer s.unlockState(true)
+
+	select {
+	case s.cTickSessions <- args.Args.(string):
+	case <-s.cClosed:
+	}
+}
+
+// stopSessionTicker 停止 Session Tick 定时器.
+func (s *Service) stopSessionTicker(tid TimerId) {
+	if err := s.lockState(stateStarted, true); err != nil {
+		return
+	}
+	defer s.unlockState(true)
+
+	s.cfg.TimerSystem.StopTimer(tid)
+}
+
+// loop 主循环逻辑.
+func (s *Service) loop() {
+	for {
+		select {
+		case nodeId := <-s.cTickSessions:
+			if session := s.sessions.get(nodeId); session != nil {
+				session.tick()
+			}
+		case <-s.cClosed:
+			return
+		}
 	}
 }

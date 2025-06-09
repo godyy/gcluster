@@ -73,12 +73,14 @@ type session struct {
 	activeEnd    bool        // 是否主动的一端（需要发送心跳请求）.
 	logger       glog.Logger // 日志工具.
 
-	mutex          sync.RWMutex  // RWMutex for following.
-	state          int8          // 状态.
-	core           *gnet.Session // 核心实现.
-	pendingPackets chan packet   // 待发送数据包队列.
-	chClosed       chan struct{} // 关闭 chan.
-	lastActiveTime int64         // 最近一次活跃的时间（发送/接收消息）.
+	mutex             sync.RWMutex  // RWMutex for following.
+	state             int8          // 状态.
+	core              *gnet.Session // 核心实现.
+	pendingPackets    chan packet   // 待发送数据包队列.
+	chClosed          chan struct{} // 关闭 chan.
+	tickTimerId       TimerId       // Tick 定时器ID.
+	lastActiveTime    int64         // 最近一次活跃的时间（发送/接收消息）.
+	lastHeartbeatTime int64         // 最近一次心跳的时间.
 }
 
 // newSession 构造 session.
@@ -91,6 +93,7 @@ func newSession(svc *Service, remoteNodeId string, activeEnd bool, conn net.Conn
 		state:          stateInit,
 		chClosed:       make(chan struct{}),
 		logger:         logger.Named("session").WithFields(lfdRemoteNodeId(remoteNodeId), lfdActiveEnd(activeEnd)),
+		tickTimerId:    TimerIdNone,
 	}
 
 	packetReadWriter := newSessionPacketReadWriter(svc)
@@ -160,12 +163,8 @@ func (s *session) start() error {
 	}
 
 	s.refreshActiveTime()
+	s.tickTimerId = s.svc.startSessionTicker(s)
 	s.state = stateStarted
-	if s.activeEnd {
-		go s.loopActiveEnd()
-	} else {
-		go s.loopPassiveEnd()
-	}
 
 	s.logger.Info("started")
 
@@ -200,6 +199,8 @@ func (s *session) closeBaseLocked(err error, locked bool) {
 	_ = s.core.Close()
 	s.core = nil
 	close(s.chClosed)
+	s.svc.stopSessionTicker(s.tickTimerId)
+	s.tickTimerId = TimerIdNone
 
 	s.logger.InfoFields("closed", lfdError(err))
 
@@ -207,78 +208,55 @@ func (s *session) closeBaseLocked(err error, locked bool) {
 	s.svc.onSessionClosed(s, err)
 }
 
-// loopActiveEnd 主动端循环逻辑.
-func (s *session) loopActiveEnd() {
-	var (
-		ticker            = time.NewTicker(s.svc.getSessionConfig().TickInterval)
-		lastHeartbeatTime = int64(0)
-	)
-
-	closed := false
-	for !closed {
-		select {
-		case <-ticker.C:
-			{
-				nowNano := time.Now().UnixNano()
-				if time.Duration(nowNano-atomic.LoadInt64(&s.lastActiveTime)) < s.svc.getSessionConfig().HeartbeatTimeout {
-					lastHeartbeatTime = 0
-					continue
-				}
-
-				if lastHeartbeatTime != 0 && time.Duration(nowNano-lastHeartbeatTime) < s.svc.getSessionConfig().HeartbeatTimeout {
-					continue
-				}
-
-				lastHeartbeatTime = nowNano
-
-				s.logger.Debug("send heartbeat")
-				p := &heartbeatPacket{}
-				p.setPing()
-				if err := s.send(context.Background(), p, false); err != nil {
-					s.logger.ErrorFields("send heartbeat", lfdError(err))
-				}
-			}
-		case <-s.chClosed:
-			closed = true
-		}
+// tick Tick 逻辑.
+func (s *session) tick() {
+	if err := s.lockState(stateStarted, true); err != nil {
+		return
 	}
+	defer s.unlockState(true)
 
-	ticker.Stop()
+	if s.activeEnd {
+		s.tickActiveEnd()
+	} else {
+		s.tickPassiveEnd()
+	}
 }
 
-// loopPassiveEnd 被动端循环逻辑.
-func (s *session) loopPassiveEnd() {
-	ticker := time.NewTicker(s.svc.getSessionConfig().TickInterval)
-
-	closed := false
-	for !closed {
-		select {
-		case <-ticker.C:
-			{
-				// 锁定状态.
-				if err := s.lockState(stateStarted, true); err != nil {
-					return
-				}
-				defer s.unlockState(true)
-
-				// 若会话仍有效, 中断.
-				if !s.inactive() {
-					return
-				}
-
-				// 发送关闭请求.
-				if err := s.sendDirect(context.Background(), &closeReqPacket{}, false); err != nil {
-					s.logger.ErrorFields("send close req", lfdError(err))
-				} else {
-					s.logger.Debug("send close req")
-				}
-			}
-		case <-s.chClosed:
-			closed = true
-		}
+// tickActiveEnd 主动端 Tick 逻辑.
+func (s *session) tickActiveEnd() {
+	nowNano := time.Now().UnixNano()
+	if time.Duration(nowNano-atomic.LoadInt64(&s.lastActiveTime)) < s.svc.getSessionConfig().HeartbeatTimeout {
+		s.lastHeartbeatTime = 0
+		return
 	}
 
-	ticker.Stop()
+	if s.lastHeartbeatTime != 0 && time.Duration(nowNano-s.lastHeartbeatTime) < s.svc.getSessionConfig().HeartbeatTimeout {
+		return
+	}
+
+	s.lastHeartbeatTime = nowNano
+
+	s.logger.Debug("send heartbeat")
+	p := &heartbeatPacket{}
+	p.setPing()
+	if err := s.send(context.Background(), p, false); err != nil {
+		s.logger.ErrorFields("send heartbeat", lfdError(err))
+	}
+}
+
+// tickPassiveEnd 被动端 Tick 逻辑.
+func (s *session) tickPassiveEnd() {
+	// 若会话仍有效, 中断.
+	if !s.inactive() {
+		return
+	}
+
+	// 发送关闭请求.
+	if err := s.sendDirect(context.Background(), &closeReqPacket{}, false); err != nil {
+		s.logger.ErrorFields("send close req", lfdError(err))
+	} else {
+		s.logger.Debug("send close req")
+	}
 }
 
 // send 发送数据底层接口.
@@ -409,3 +387,5 @@ func (s *sessionLocal) close(_ error) {}
 func (s *sessionLocal) keepActive() error {
 	return nil
 }
+
+func (s *sessionLocal) tick() {}

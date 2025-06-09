@@ -99,6 +99,7 @@ func TestServiceConnect(t *testing.T) {
 		Session:         sessionCfg,
 		Dialer:          dialer,
 		ListenerCreator: createListener,
+		TimerSystem:     NewTimerHeap(),
 	}
 
 	s2Cfg := &ServiceConfig{
@@ -111,6 +112,7 @@ func TestServiceConnect(t *testing.T) {
 		Session:         sessionCfg,
 		Dialer:          dialer,
 		ListenerCreator: createListener,
+		TimerSystem:     NewTimerHeap(),
 	}
 
 	s1, err := CreateService(s1Cfg, testHandler, WithServiceLogger(logger))
@@ -212,6 +214,7 @@ func TestServiceSession(t *testing.T) {
 		Session:         sessionCfg,
 		Dialer:          dialer,
 		ListenerCreator: createListener,
+		TimerSystem:     NewTimerHeap(),
 	}
 	s2Cfg := &ServiceConfig{
 		NodeId: node2Name,
@@ -223,6 +226,7 @@ func TestServiceSession(t *testing.T) {
 		Session:         sessionCfg,
 		Dialer:          dialer,
 		ListenerCreator: createListener,
+		TimerSystem:     NewTimerHeap(),
 	}
 
 	s1, err := CreateService(s1Cfg, &testServiceHandler{
@@ -400,9 +404,11 @@ func TestServiceConcurrentConnect(t *testing.T) {
 				Token:   "123",
 				Timeout: 60 * time.Second,
 			},
-			Session:         sessionCfg,
-			Dialer:          dialer,
-			ListenerCreator: createListener,
+			Session:                    sessionCfg,
+			Dialer:                     dialer,
+			ListenerCreator:            createListener,
+			TimerSystem:                NewTimerHeap(),
+			ExpectedConcurrentSessions: 1000,
 		}
 
 		s, err := CreateService(serviceCfg, handler, WithServiceLogger(logger))

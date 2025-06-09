@@ -25,6 +25,9 @@ type Session interface {
 
 	// keepActive 保持活跃.
 	keepActive() error
+
+	// tick Tick 逻辑.
+	tick()
 }
 
 // sessionMap sessionMap.
