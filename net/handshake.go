@@ -28,11 +28,11 @@ func (c *HandshakeConfig) init() error {
 	}
 
 	if c.Token == "" {
-		return errors.New("HandshakeConfig.Token empty")
+		return errors.New("HandshakeConfig: Token empty")
 	}
 
 	if c.Timeout <= 0 {
-		return errors.New("HandshakeConfig.Timeout must > 0")
+		return errors.New("HandshakeConfig: Timeout must > 0")
 	}
 
 	return nil

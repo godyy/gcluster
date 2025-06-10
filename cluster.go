@@ -97,15 +97,15 @@ func (c *ServiceConfig) init() error {
 	}
 
 	if c.Center == nil {
-		return errors.New("ServiceConfig.Center not specified")
+		return errors.New("ServiceConfig: Center not specified")
 	}
 
 	if c.Net == nil {
-		return errors.New("ServiceConfig.Net not specified")
+		return errors.New("ServiceConfig: Net not specified")
 	}
 
 	if c.Handler == nil {
-		return errors.New("ServiceConfig.Handler not specified")
+		return errors.New("ServiceConfig: Handler not specified")
 	}
 
 	return nil

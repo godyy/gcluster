@@ -87,7 +87,7 @@ func TestAgent(t *testing.T) {
 		MaxPacketLength:        1024,
 		ReadWriteTimeout:       60 * time.Second,
 		TickInterval:           1 * time.Second,
-		HeartbeatTimeout:       1 * time.Second,
+		HeartbeatTimeout:       2 * time.Second,
 		InactiveTimeout:        5 * time.Minute,
 		ReadBufSize:            10 * 1024,
 		WriteBufSize:           10 * 1024,
@@ -200,8 +200,7 @@ func TestConcurrentConnect(t *testing.T) {
 		ReadBufSize:            64 * 1024,
 		WriteBufSize:           64 * 1024,
 		ReadWriteTimeout:       30 * time.Second,
-		TickInterval:           1 * time.Second,
-		HeartbeatTimeout:       5 * time.Second,
+		TickInterval:           5 * time.Second,
 		InactiveTimeout:        5 * time.Minute,
 	}
 

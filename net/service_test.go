@@ -73,7 +73,7 @@ func TestServiceConnect(t *testing.T) {
 		MaxPacketLength:        1024,
 		ReadWriteTimeout:       60 * time.Second,
 		TickInterval:           1 * time.Second,
-		HeartbeatTimeout:       1 * time.Second,
+		HeartbeatTimeout:       2 * time.Second,
 		InactiveTimeout:        5 * time.Second,
 		ReadBufSize:            10 * 1024,
 		WriteBufSize:           10 * 1024,

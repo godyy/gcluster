@@ -44,11 +44,11 @@ func (c *ServiceConfig) init() error {
 	}
 
 	if c.NodeId == "" {
-		return errors.New("ServiceConfig.NodeId not specified")
+		return errors.New("ServiceConfig: NodeId not specified")
 	}
 
 	if c.Addr == "" {
-		return errors.New("ServiceConfig.Addr not specified")
+		return errors.New("ServiceConfig: Addr not specified")
 	}
 
 	if err := c.Handshake.init(); err != nil {
@@ -60,15 +60,15 @@ func (c *ServiceConfig) init() error {
 	}
 
 	if c.Dialer == nil {
-		return errors.New("ServiceConfig.Dialer not specified")
+		return errors.New("ServiceConfig: Dialer not specified")
 	}
 
 	if c.ListenerCreator == nil {
-		return errors.New("ServiceConfig.ListenerCreator not specified")
+		return errors.New("ServiceConfig: ListenerCreator not specified")
 	}
 
 	if c.TimerSystem == nil {
-		return errors.New("ServiceConfig.TimerSystem not specified")
+		return errors.New("ServiceConfig: TimerSystem not specified")
 	}
 
 	if c.ExpectedConcurrentSessions <= 0 {

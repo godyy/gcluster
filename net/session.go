@@ -16,14 +16,37 @@ import (
 
 // SessionConfig Session 配置
 type SessionConfig struct {
-	PendingPacketQueueSize int           // 待发送数据包队列大小.
-	MaxPacketLength        int           // 最大数据包长度.
-	ReadBufSize            int           // 读取缓冲区大小.
-	WriteBufSize           int           // 发送缓冲区大小.
-	ReadWriteTimeout       time.Duration // 读写超时.
-	TickInterval           time.Duration // Tick 间隔.
-	HeartbeatTimeout       time.Duration // 心跳超时.
-	InactiveTimeout        time.Duration // 不活跃超时.
+	// PendingPacketQueueSize 待发送数据包队列大小, 表示可同时排队的包数量上限.
+	// 默认值为 100.
+	PendingPacketQueueSize int
+
+	// MaxPacketLength 表示支持的最大数据包长度.
+	MaxPacketLength int
+
+	// ReadBufSize 表示读取批处理缓冲区的大小.
+	ReadBufSize int
+
+	// WriteBufSize 表示发送批处理缓冲区的大小.
+	WriteBufSize int
+
+	// ReadWriteTimeout 读写超时.
+	ReadWriteTimeout time.Duration
+
+	// TickInterval Tick 间隔. Tick 用于定期处理 Session 的生命周期逻辑.
+	// 默认值和上限均为 ReadWriteTimeout/3.
+	TickInterval time.Duration
+
+	// HeartbeatTimeout 心跳超时. 当 Session 属于主动端时, 心跳超时用于定期通知
+	// 对端保持连接的活跃. 每次 Tick 时会检查最近一次活跃(发送或接收Raw数据包)的流逝
+	// 时间, 若达到或超过 HeartbeatTimeout, 则发送心跳包.
+	// 默认值和上限均为 ReadWriteTimeout/2.
+	HeartbeatTimeout time.Duration
+
+	// InactiveTimeout 不活跃超时. 当 Session 属于被动端时, 不活跃超时用于定期检查
+	// 连接的活跃状态. 每次 Tick 时会检查最近一次活跃(发送或接收Raw数据包)的流逝
+	// 时间, 若达到或超过 InactiveTimeout, 则发送关闭请求.
+	// 值不能等于或低于 ReadWriteTimeout.
+	InactiveTimeout time.Duration
 }
 
 func (c *SessionConfig) init() error {
@@ -32,35 +55,43 @@ func (c *SessionConfig) init() error {
 	}
 
 	if c.PendingPacketQueueSize <= 0 {
-		return errors.New("SessionConfig.PendingPacketQueueSize must > 0")
+		c.PendingPacketQueueSize = 100
 	}
 
 	if c.MaxPacketLength <= 0 || c.MaxPacketLength >= math.MaxInt32 {
-		return fmt.Errorf("SessionConfig.MaxPacketLength must > 0 and < %d", math.MaxInt32)
+		return fmt.Errorf("SessionConfig: MaxPacketLength must > 0 and < %d", math.MaxInt32)
 	}
 
 	if c.ReadBufSize <= 0 {
-		return errors.New("SessionConfig.ReadBufSize must > 0")
+		return errors.New("SessionConfig: ReadBufSize must > 0")
 	}
 
 	if c.WriteBufSize <= 0 {
-		return errors.New("SessionConfig.WriteBufSize must > 0")
+		return errors.New("SessionConfig: WriteBufSize must > 0")
 	}
 
 	if c.ReadWriteTimeout <= 0 {
-		return errors.New("SessionConfig.ReadWriteTimeout must > 0")
+		return errors.New("SessionConfig: ReadWriteTimeout must > 0")
 	}
 
 	if c.TickInterval <= 0 {
-		return errors.New("SessionConfig.TickInterval must > 0")
+		c.TickInterval = c.ReadWriteTimeout / 3
+	} else if c.TickInterval > c.ReadWriteTimeout/3 {
+		return errors.New("SessionConfig: TickInterval must <= ReadWriteTimeout/3")
 	}
 
 	if c.HeartbeatTimeout <= 0 {
-		return errors.New("SessionConfig.HeartbeatTimeout must > 0")
+		c.HeartbeatTimeout = c.ReadWriteTimeout / 2
+	} else if c.HeartbeatTimeout > c.ReadWriteTimeout/2 {
+		return errors.New("SessionConfig: HeartbeatTimeout must <= ReadWriteTimeout/2")
 	}
 
-	if c.InactiveTimeout <= 0 {
-		return errors.New("SessionConfig.InactiveTimeout must > 0")
+	if c.TickInterval >= c.HeartbeatTimeout {
+		return errors.New("SessionConfig: TickInterval must < HeartbeatTimeout")
+	}
+
+	if c.InactiveTimeout <= c.ReadWriteTimeout {
+		return errors.New("SessionConfig: InactiveTimeout must > ReadWriteTimeout")
 	}
 
 	return nil
