@@ -295,7 +295,7 @@ func (s *Service) onSessionPacket(session Session, p *RawPacket) error {
 }
 
 // onSessionClosed 处理 Session 关闭.
-func (s *Service) onSessionClosed(session Session, err error) {
+func (s *Service) onSessionClosed(session sessionImpl, err error) {
 	s.sessions.compareAndDelete(session)
 }
 

@@ -19,6 +19,14 @@ type Session interface {
 
 	// SendRaw 发送 Raw 数据包.
 	SendRaw(ctx context.Context, p *RawPacket) error
+}
+
+// sessionImpl Session 内部实现.
+type sessionImpl interface {
+	Session
+
+	// start 启动会话.
+	start() error
 
 	// close 关闭会话.
 	close(err error)
@@ -41,25 +49,25 @@ func newSessionMap() *sessionMap {
 	}
 }
 
-func (s *sessionMap) get(remoteNodeId string) Session {
+func (s *sessionMap) get(remoteNodeId string) sessionImpl {
 	v, ok := s.Load(remoteNodeId)
 	if !ok {
 		return nil
 	}
-	return v.(Session)
+	return v.(sessionImpl)
 }
 
-func (s *sessionMap) add(session Session) {
+func (s *sessionMap) add(session sessionImpl) {
 	s.Store(session.RemoteNodeId(), session)
 }
 
-func (s *sessionMap) compareAndDelete(session Session) bool {
+func (s *sessionMap) compareAndDelete(session sessionImpl) bool {
 	return s.CompareAndDelete(session.RemoteNodeId(), session)
 }
 
 func (s *sessionMap) close(err error) {
 	s.Range(func(key, value any) bool {
-		value.(Session).close(err)
+		value.(sessionImpl).close(err)
 		s.CompareAndDelete(key, value)
 		return true
 	})

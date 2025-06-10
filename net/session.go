@@ -382,6 +382,10 @@ func (s *sessionLocal) SendRaw(_ context.Context, p *RawPacket) error {
 	return s.svc.onSessionPacket(s, p)
 }
 
+func (s *sessionLocal) start() error {
+	return nil
+}
+
 func (s *sessionLocal) close(_ error) {}
 
 func (s *sessionLocal) keepActive() error {
