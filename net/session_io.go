@@ -14,9 +14,11 @@ import (
 
 // sessionPacketReadWriter 实现数据包的读写功能.
 type sessionPacketReadWriter struct {
-	svc         *Service           // Service.
-	readBuffer  *bytes.FixedBuffer // 读取缓冲区.
-	writeBuffer *bytes.FixedBuffer // 发送缓冲区.
+	svc                 *Service           // Service.
+	readBuffer          *bytes.FixedBuffer // 读取缓冲区.
+	writeBuffer         *bytes.FixedBuffer // 发送缓冲区.
+	batchWriteCount     int                // 批量发送计数.
+	batchWriteStartTime time.Time          // 批量发送开始时间.
 }
 
 // newSessionPacketReadWriter 创建 sessionPacketReadWriter.
@@ -87,24 +89,36 @@ func (rw *sessionPacketReadWriter) writeFromBuffer(cw gnet.ConnWriter) error {
 			return err
 		}
 	}
+	rw.batchWriteCount = 0
+	rw.batchWriteStartTime = time.Time{}
 	return nil
 }
 
 // writeFull 将 p 通过 cw 完整的发送出去.
 func (rw *sessionPacketReadWriter) writeFull(cw gnet.ConnWriter, p []byte) error {
+	if rw.batchWriteStartTime.IsZero() {
+		rw.batchWriteStartTime = time.Now()
+	}
+
 	for len(p) > 0 {
 		n, err := rw.writeBuffer.Write(p)
 		if n > 0 {
 			p = p[n:]
-		}
-		if err != nil {
-			if errors.Is(err, buffer.ErrBufferFull) {
-				if err := rw.writeFromBuffer(cw); err != nil {
-					return err
-				}
-				continue
+			if len(p) == 0 {
+				rw.batchWriteCount++
 			}
+		}
+		if errors.Is(err, buffer.ErrBufferFull) {
+			if err = rw.writeFromBuffer(cw); err != nil {
+				return err
+			}
+		} else if err != nil {
 			return err
+		} else if rw.batchWriteCount >= rw.svc.getSessionConfig().BatchWriteLimit ||
+			time.Since(rw.batchWriteStartTime) >= rw.svc.getSessionConfig().BatchWriteTimeLmit {
+			if err = rw.writeFromBuffer(cw); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -127,17 +141,23 @@ func (rw *sessionPacketReadWriter) SessionWritePacket(cw gnet.ConnWriter, p gnet
 		defer rw.svc.putRawPacket(pp.(*RawPacket))
 	}
 
+	// payload.
+	payload := pp.Data()
+	payloadLen := uint32(len(payload))
+
 	// head.
 	var head packetHead
 	head.setProtoType(pp.protoType())
-	head.setPayloadLen(uint32(len(pp.Data())))
+	head.setPayloadLen(payloadLen)
 	if err := rw.writeFull(cw, head[:]); err != nil {
 		return pkgerrors.WithMessage(err, "session writeFull packet head")
 	}
 
-	// payload.
-	if err := rw.writeFull(cw, pp.Data()); err != nil {
-		return pkgerrors.WithMessage(err, "session writeFull packet payload")
+	// write payload.
+	if payloadLen > 0 {
+		if err := rw.writeFull(cw, payload); err != nil {
+			return pkgerrors.WithMessage(err, "session writeFull packet payload")
+		}
 	}
 
 	if !more && rw.writeBuffer.Readable() > 0 {

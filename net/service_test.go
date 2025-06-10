@@ -71,10 +71,10 @@ func TestServiceConnect(t *testing.T) {
 	sessionCfg := SessionConfig{
 		PendingPacketQueueSize: 10,
 		MaxPacketLength:        1024,
-		ReadWriteTimeout:       60 * time.Second,
+		ReadWriteTimeout:       5 * time.Second,
 		TickInterval:           1 * time.Second,
 		HeartbeatTimeout:       2 * time.Second,
-		InactiveTimeout:        5 * time.Second,
+		InactiveTimeout:        10 * time.Second,
 		ReadBufSize:            10 * 1024,
 		WriteBufSize:           10 * 1024,
 	}
@@ -138,7 +138,7 @@ func TestServiceConnect(t *testing.T) {
 		t.Fatal("node1 connect node2", err)
 	}
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(15 * time.Second)
 
 	_ = s1.Close()
 	_ = s2.Close()
@@ -351,6 +351,8 @@ func TestServiceConcurrentConnect(t *testing.T) {
 		ReadBufSize:            64 * 1024,
 		WriteBufSize:           64 * 1024,
 		ReadWriteTimeout:       30 * time.Second,
+		BatchWriteLimit:        50,
+		BatchWriteTimeLmit:     1 * time.Millisecond,
 		TickInterval:           1 * time.Second,
 		HeartbeatTimeout:       5 * time.Second,
 		InactiveTimeout:        5 * time.Minute,
@@ -425,15 +427,22 @@ func TestServiceConcurrentConnect(t *testing.T) {
 
 	n := 10
 	m := 100
+	wg.Add(serviceCount * (serviceCount - 1) * n * m)
+	wgRountines := &sync.WaitGroup{}
+	wgRountines.Add(serviceCount * (serviceCount - 1) * n)
+	wgStarted := &sync.WaitGroup{}
+	wgStarted.Add(1)
 	for i := range services {
-		wg.Add(n * m * (serviceCount - 1))
-		go func(service *Service, i int) {
-			for k := range services {
-				if k == i {
-					continue
-				}
-				go func(s1, s2 *Service) {
-					for i := 0; i < n; i++ {
+		for k := range services {
+			if k == i {
+				continue
+			}
+			go func(s1, s2 *Service) {
+				for i := 0; i < n; i++ {
+					go func() {
+						wgRountines.Done()
+						wgStarted.Wait()
+
 						connects.Add(1)
 						session, err := s1.Connect(s2.NodeId(), s2.Addr())
 						if err != nil {
@@ -441,23 +450,23 @@ func TestServiceConcurrentConnect(t *testing.T) {
 							return
 						}
 
-						go func(session Session) {
-							for i := 0; i < m; i++ {
-								p := NewRawPacketWithCap(8)
-								_ = p.WriteInt64(packetId.Add(1))
-								if err := session.SendRaw(context.Background(), p); err != nil {
-									logger.Errorf("%s send to %s No.%d: %s", s1.NodeId(), s2.NodeId(), i, err)
-								} else {
-									sends.Add(1)
-								}
+						for i := 0; i < m; i++ {
+							p := NewRawPacketWithCap(8)
+							_ = p.WriteInt64(packetId.Add(1))
+							if err := session.SendRaw(context.Background(), p); err != nil {
+								logger.Errorf("%s send to %s No.%d: %s", s1.NodeId(), s2.NodeId(), i, err)
+							} else {
+								sends.Add(1)
 							}
-						}(session)
-					}
-				}(service, services[k])
-			}
-
-		}(services[i], i)
+						}
+					}()
+				}
+			}(services[i], services[k])
+		}
 	}
+
+	wgRountines.Wait()
+	wgStarted.Done()
 
 	chWg := make(chan struct{})
 	go func() {

@@ -32,6 +32,14 @@ type SessionConfig struct {
 	// ReadWriteTimeout 读写超时.
 	ReadWriteTimeout time.Duration
 
+	// BatchWriteLimit 表示批量发送支持的数据包数量上限.
+	// 默认值为 10.
+	BatchWriteLimit int
+
+	// BatchWriteTimeLmit 表示批量发送数据包时间限制.
+	// 默认值为 1ms.
+	BatchWriteTimeLmit time.Duration
+
 	// TickInterval Tick 间隔. Tick 用于定期处理 Session 的生命周期逻辑.
 	// 默认值和上限均为 ReadWriteTimeout/3.
 	TickInterval time.Duration
@@ -72,6 +80,14 @@ func (c *SessionConfig) init() error {
 
 	if c.ReadWriteTimeout <= 0 {
 		return errors.New("SessionConfig: ReadWriteTimeout must > 0")
+	}
+
+	if c.BatchWriteLimit <= 0 {
+		c.BatchWriteLimit = 10
+	}
+
+	if c.BatchWriteTimeLmit <= 0 {
+		c.BatchWriteTimeLmit = time.Millisecond * 1
 	}
 
 	if c.TickInterval <= 0 {
