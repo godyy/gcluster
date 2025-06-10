@@ -134,9 +134,32 @@ func TestServiceConnect(t *testing.T) {
 
 	time.Sleep(2 * time.Second)
 
-	if _, err := s1.Connect(nodeId2, s2Addr); err != nil {
-		t.Fatal("node1 connect node2", err)
+	n := 100
+	wgRoutines := &sync.WaitGroup{}
+	wgRoutines.Add(n * 2)
+	wgStarted := &sync.WaitGroup{}
+	wgStarted.Add(1)
+	for i := 0; i < n; i++ {
+		go func() {
+			wgRoutines.Done()
+			wgStarted.Wait()
+			if _, err := s1.Connect(nodeId2, s2Addr); err != nil {
+				logger.Fatalf("node1 connect node2: %v", err)
+			}
+		}()
 	}
+	for i := 0; i < n; i++ {
+		go func() {
+			wgRoutines.Done()
+			wgStarted.Wait()
+			if _, err := s2.Connect(nodeId1, s1Addr); err != nil {
+				logger.Fatalf("node2 connect node1: %v", err)
+			}
+		}()
+	}
+
+	wgRoutines.Wait()
+	wgStarted.Done()
 
 	time.Sleep(15 * time.Second)
 
@@ -338,7 +361,7 @@ func TestServiceConcurrentConnect(t *testing.T) {
 	wg := &sync.WaitGroup{}
 
 	logger := glog.NewLogger(&glog.Config{
-		Level:        glog.DebugLevel,
+		Level:        glog.WarnLevel,
 		EnableCaller: true,
 		CallerSkip:   0,
 		Development:  true,
@@ -346,28 +369,20 @@ func TestServiceConcurrentConnect(t *testing.T) {
 	})
 
 	sessionCfg := SessionConfig{
-		PendingPacketQueueSize: 1000,
-		MaxPacketLength:        16 * 1024,
-		ReadBufSize:            64 * 1024,
-		WriteBufSize:           64 * 1024,
-		ReadWriteTimeout:       30 * time.Second,
+		PendingPacketQueueSize: 100,
+		MaxPacketLength:        512,
+		ReadBufSize:            1024,
+		WriteBufSize:           1024,
+		ReadWriteTimeout:       60 * time.Second,
 		BatchWriteLimit:        50,
 		BatchWriteTimeLmit:     1 * time.Millisecond,
-		TickInterval:           1 * time.Second,
-		HeartbeatTimeout:       5 * time.Second,
+		TickInterval:           10 * time.Second,
 		InactiveTimeout:        5 * time.Minute,
 	}
 
 	dialer := func(addr string) (net.Conn, error) {
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
-			return nil, err
-		}
-		tcpConn := conn.(*net.TCPConn)
-		if err := tcpConn.SetReadBuffer(64 * 1024); err != nil {
-			return nil, err
-		}
-		if err := tcpConn.SetWriteBuffer(64 * 1024); err != nil {
 			return nil, err
 		}
 		return conn, nil
@@ -381,9 +396,6 @@ func TestServiceConcurrentConnect(t *testing.T) {
 		return &testListener{
 			Listener: l,
 			accept: func(conn net.Conn) {
-				tcpConn := conn.(*net.TCPConn)
-				_ = tcpConn.SetReadBuffer(64 * 1024)
-				_ = tcpConn.SetWriteBuffer(64 * 1024)
 			},
 		}, nil
 	}
@@ -396,7 +408,7 @@ func TestServiceConcurrentConnect(t *testing.T) {
 		},
 	}
 
-	serviceCount := 40
+	serviceCount := 50
 	services := make([]*Service, serviceCount)
 	for i := range services {
 		serviceCfg := &ServiceConfig{
@@ -426,7 +438,7 @@ func TestServiceConcurrentConnect(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	n := 10
-	m := 100
+	m := 500
 	wg.Add(serviceCount * (serviceCount - 1) * n * m)
 	wgRountines := &sync.WaitGroup{}
 	wgRountines.Add(serviceCount * (serviceCount - 1) * n)

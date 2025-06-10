@@ -281,11 +281,14 @@ func (s *Service) GetSession(nodeId string) Session {
 		return nil
 	}
 	defer s.unlockState(true)
+	return s.getSession(nodeId)
+}
 
+// getSession 获取连接 nodeId 指向 Service 的 Session.
+func (s *Service) getSession(nodeId string) Session {
 	if session := s.sessions.get(nodeId); session != nil && session.keepActive() == nil {
 		return session
 	}
-
 	return nil
 }
 

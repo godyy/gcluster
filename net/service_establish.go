@@ -40,16 +40,6 @@ func (s *Service) Connect(nodeId string, addr string) (session Session, err erro
 	return
 }
 
-func (s *Service) onConnect(nodeId, addr string) (Session, error) {
-	if err := s.lockState(stateStarted, true); err != nil {
-		return nil, err
-	}
-	establishment := s.getOrCreateEstablishment(nodeId)
-	s.unlockState(true)
-	s.startActiveEstablish(establishment, addr)
-	return establishment.wait()
-}
-
 // listen 网络监听逻辑.
 func (s *Service) listen() {
 	for !s.isClosed() {
@@ -92,15 +82,26 @@ func (s *Service) onPassiveConn(conn net.Conn) {
 
 	remoteNodeId := hsApply.NodeId
 
+	// 锁定状态.
+	if err := s.lockState(stateStarted, true); err != nil {
+		_ = conn.Close()
+		return
+	}
+
 	// 若重复建立，直接拒绝
-	if session := s.GetSession(remoteNodeId); session != nil {
+	if session := s.getSession(remoteNodeId); session != nil {
+		s.unlockState(true)
 		s.logger.ErrorFields("session established", lfdNetRemoteAddr(conn.RemoteAddr()), lfdRemoteNodeId(hsApply.NodeId))
 		_ = handshakeHelper.writeRejected(conn, pb.HSRejectedReason_SessionEstablished, s.config().Handshake.Timeout)
 		_ = conn.Close()
 		return
 	}
 
+	// 创建 establishment.
 	establishment := s.getOrCreateEstablishment(remoteNodeId)
+	s.unlockState(true)
+
+	// 开始被动连接建立.
 	if s.startPassiveEstablish(establishment, conn, hsApply.Time) {
 		_, err := establishment.wait()
 		if err != nil {
@@ -130,38 +131,6 @@ func (s *Service) getOrCreateEstablishment(remoteNodeId string) *establishment {
 			return &ec
 		}
 	}
-}
-
-// whichEstablishEarlier 根据 establishment 判断 active 表示的连接是否更早开始建立.
-// 若更早，调用 earlierCb; 否则，调用 otherwiseCb.
-func (s *Service) whichEstablishEarlier(es *establishment, active bool, earlierCb, otherwiseCb func()) bool {
-	es.mutex.Lock()
-	defer es.mutex.Unlock()
-
-	var earlier bool
-
-	switch es.whichStartEarlier(s.NodeId() < es.remoteNodeId) {
-	case 1:
-		// 主动建立的连接更先
-		earlier = active
-	case 2:
-		// 被动建立的连接更先
-		earlier = !active
-	default:
-		earlier = false
-	}
-
-	if earlier {
-		if earlierCb != nil {
-			earlierCb()
-		}
-	} else {
-		if otherwiseCb != nil {
-			otherwiseCb()
-		}
-	}
-
-	return earlier
 }
 
 // startActiveEstablish 启动主动连接建立过程，连接 remoteAddr 指定的远端.
@@ -266,14 +235,8 @@ func (s *Service) activeEstablishHandshake(es *establishment, conn net.Conn) {
 			return
 		}
 
-		if s.whichEstablishEarlier(es, false, nil, func() { es.activeAboutSuccess() }) {
-			s.logger.InfoFields("passive establish earlier, stop active establish",
-				lfdNetRemoteAddr(conn.RemoteAddr()),
-				lfdRemoteNodeId(es.remoteNodeId))
-			s.activeEstablishFail(es, conn, ErrPassiveHandshakeEarlier)
-		} else {
-			s.activeEstablishAboutSuccess(es, conn)
-		}
+		// 连接即将成功.
+		s.activeEstablishAboutSuccess(es, conn)
 
 	case *pb.HSRejected:
 		// 握手被拒绝.
@@ -295,6 +258,10 @@ func (s *Service) activeEstablishHandshake(es *establishment, conn net.Conn) {
 
 // activeEstablishAboutSuccess 主动连接即将成功过程.
 func (s *Service) activeEstablishAboutSuccess(es *establishment, conn net.Conn) {
+	es.mutex.Lock()
+	es.activeAboutSuccess()
+	es.mutex.Unlock()
+
 	// 回复握手完成.
 	if err := handshakeHelper.writeCompleted(conn, s.config().Handshake.Timeout); err != nil {
 		s.logger.ErrorFields("write handshake completed",
@@ -424,26 +391,18 @@ func (s *Service) passiveEstablishHandshake(es *establishment, conn net.Conn) {
 			lfdNetRemoteAddr(conn.RemoteAddr()),
 			lfdRemoteNodeId(es.remoteNodeId))
 
-		// 握手完成.
-		if s.whichEstablishEarlier(es, true, nil, nil) {
-			s.logger.InfoFields("active establish earlier, stop passive establish",
+		// 回复完成确认.
+		if err := handshakeHelper.writeCompletedAck(conn, s.config().Handshake.Timeout); err != nil {
+			s.logger.ErrorFields("write handshake completed ack",
 				lfdNetRemoteAddr(conn.RemoteAddr()),
-				lfdRemoteNodeId(es.remoteNodeId))
-			s.passiveEstablishFail(es, conn, ErrActiveHandshakeEarlier)
-		} else {
-			// 回复完成确认.
-			if err := handshakeHelper.writeCompletedAck(conn, s.config().Handshake.Timeout); err != nil {
-				s.logger.ErrorFields("write handshake completed ack",
-					lfdNetRemoteAddr(conn.RemoteAddr()),
-					lfdRemoteNodeId(es.remoteNodeId),
-					lfdError(err))
-				s.passiveEstablishFail(es, conn, ErrReplyHandshake)
-				return
-			}
-
-			// 成功.
-			s.passiveEstablishSuccess(es, conn)
+				lfdRemoteNodeId(es.remoteNodeId),
+				lfdError(err))
+			s.passiveEstablishFail(es, conn, ErrReplyHandshake)
+			return
 		}
+
+		// 成功.
+		s.passiveEstablishSuccess(es, conn)
 
 	case *pb.HSRejected:
 		// 被拒绝.
@@ -523,28 +482,28 @@ func (s *Service) establishEnd(es *establishment) {
 
 	switch {
 	case es.isActiveSuccess() && (!es.isPassiveStarted() || es.isPassiveFail()):
-		s.logger.InfoFields("active establish finally success",
+		s.logger.WarnFields("active establish finally success",
 			lfdNetRemoteAddr(es.activeConn().RemoteAddr()),
 			lfdRemoteNodeId(es.remoteNodeId))
 		conn = es.activeConn()
 		active = true
 
 	case es.isPassiveSuccess() && (!es.isActiveStarted() || es.isActiveFail()):
-		s.logger.InfoFields("passive establish finally success",
+		s.logger.WarnFields("passive establish finally success",
 			lfdNetRemoteAddr(es.passiveConn().RemoteAddr()),
 			lfdRemoteNodeId(es.remoteNodeId))
 		conn = es.passiveConn()
 
 	case es.isActiveSuccess() && es.isPassiveSuccess():
 		if es.whichStartEarlier(s.NodeId() < es.remoteNodeId) == 1 {
-			s.logger.InfoFields("active establish finally success cause earlier than passive",
+			s.logger.WarnFields("active establish finally success cause earlier than passive",
 				lfdNetRemoteAddr(es.activeConn().RemoteAddr()),
 				lfdRemoteNodeId(es.remoteNodeId))
 			_ = es.passiveConn().Close()
 			conn = es.activeConn()
 			active = true
 		} else {
-			s.logger.InfoFields("passive establish finally success cause earlier than active",
+			s.logger.WarnFields("passive establish finally success cause earlier than active",
 				lfdNetRemoteAddr(es.passiveConn().RemoteAddr()),
 				lfdRemoteNodeId(es.remoteNodeId))
 			_ = es.activeConn().Close()
@@ -552,17 +511,17 @@ func (s *Service) establishEnd(es *establishment) {
 		}
 
 	case es.isActiveFail() && !es.isPassiveStarted():
-		s.logger.InfoFields("active establish finally fail",
+		s.logger.WarnFields("active establish finally fail",
 			lfdRemoteNodeId(es.remoteNodeId))
 		err = es.activeErr()
 
 	case es.isPassiveFail() && !es.isActiveStarted():
-		s.logger.InfoFields("passive establish finally fail",
+		s.logger.WarnFields("passive establish finally fail",
 			lfdRemoteNodeId(es.remoteNodeId))
 		err = es.passiveErr()
 
 	case es.isActiveFail() && es.isPassiveFail():
-		s.logger.InfoFields("both active and passive establish finally fail",
+		s.logger.WarnFields("both active and passive establish finally fail",
 			lfdRemoteNodeId(es.remoteNodeId))
 		if es.whichStartEarlier(s.NodeId() < es.remoteNodeId) == 1 {
 			err = es.activeErr()
@@ -589,8 +548,8 @@ func (s *Service) establishEnd(es *establishment) {
 
 // establishEndFailed 连接建立失败.
 func (s *Service) establishEndFailed(es *establishment, err error) {
-	s.establishments.CompareAndDelete(es.remoteNodeId, es)
 	es.end(nil, err)
+	s.establishments.CompareAndDelete(es.remoteNodeId, es)
 }
 
 // establishEndCreateSession 连接建立成功后创建 session.

@@ -195,25 +195,20 @@ func TestConcurrentConnect(t *testing.T) {
 	center := &testCenter{nodes: make(map[string]*testNode)}
 
 	sessionCfg := net.SessionConfig{
-		PendingPacketQueueSize: 1000,
-		MaxPacketLength:        16 * 1024,
-		ReadBufSize:            64 * 1024,
-		WriteBufSize:           64 * 1024,
-		ReadWriteTimeout:       30 * time.Second,
-		TickInterval:           5 * time.Second,
+		PendingPacketQueueSize: 100,
+		MaxPacketLength:        512,
+		ReadBufSize:            1024,
+		WriteBufSize:           1024,
+		ReadWriteTimeout:       60 * time.Second,
+		BatchWriteLimit:        50,
+		BatchWriteTimeLmit:     1 * time.Millisecond,
+		TickInterval:           10 * time.Second,
 		InactiveTimeout:        5 * time.Minute,
 	}
 
 	dialer := func(addr string) (stdnet.Conn, error) {
 		conn, err := stdnet.Dial("tcp", addr)
 		if err != nil {
-			return nil, err
-		}
-		tcpConn := conn.(*stdnet.TCPConn)
-		if err := tcpConn.SetReadBuffer(64 * 1024); err != nil {
-			return nil, err
-		}
-		if err := tcpConn.SetWriteBuffer(64 * 1024); err != nil {
 			return nil, err
 		}
 		return conn, nil
@@ -227,9 +222,6 @@ func TestConcurrentConnect(t *testing.T) {
 		return &testListener{
 			Listener: l,
 			accept: func(conn stdnet.Conn) {
-				tcpConn := conn.(*stdnet.TCPConn)
-				_ = tcpConn.SetReadBuffer(64 * 1024)
-				_ = tcpConn.SetWriteBuffer(64 * 1024)
 			},
 		}, nil
 	}
@@ -242,7 +234,7 @@ func TestConcurrentConnect(t *testing.T) {
 		},
 	}
 
-	serviceCount := 40
+	serviceCount := 50
 	services := make([]*Agent, serviceCount)
 	serviceIds := make([]string, serviceCount)
 	for i := range services {
@@ -284,36 +276,43 @@ func TestConcurrentConnect(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	n := 10
-	m := 100
+	m := 500
+	wg.Add(serviceCount * (serviceCount - 1) * n * m)
+	wgRountines := &sync.WaitGroup{}
+	wgRountines.Add(serviceCount * (serviceCount - 1) * n)
+	wgStarted := &sync.WaitGroup{}
+	wgStarted.Add(1)
 	for i := range serviceIds {
-		wg.Add(n * m * (serviceCount - 1))
-		go func(i int) {
-			service := services[i]
-			serviceId := serviceIds[i]
-			for k := range serviceIds {
-				if k == i {
-					continue
-				}
-				go func(a *Agent, targetNodeId string) {
-					for i := 0; i < n; i++ {
-						connects.Add(1)
-						go func() {
-							for i := 0; i < m; i++ {
-								p := net.NewRawPacketWithCap(8)
-								_ = p.WriteInt64(packetId.Add(1))
-								if err := a.Send2Node(context.Background(), targetNodeId, p); err != nil {
-									logger.Errorf("%s send to %s No.%d: %s", serviceId, targetNodeId, i, err)
-								} else {
-									sends.Add(1)
-								}
-							}
-						}()
-					}
-				}(service, serviceIds[k])
+		service := services[i]
+		serviceId := serviceIds[i]
+		for k := range serviceIds {
+			if k == i {
+				continue
 			}
+			go func(a *Agent, targetNodeId string) {
+				for i := 0; i < n; i++ {
+					go func() {
+						wgRountines.Done()
+						wgStarted.Wait()
 
-		}(i)
+						connects.Add(1)
+						for i := 0; i < m; i++ {
+							p := net.NewRawPacketWithCap(8)
+							_ = p.WriteInt64(packetId.Add(1))
+							if err := a.Send2Node(context.Background(), targetNodeId, p); err != nil {
+								logger.Errorf("%s send to %s No.%d: %s", serviceId, targetNodeId, i, err)
+							} else {
+								sends.Add(1)
+							}
+						}
+					}()
+				}
+			}(service, serviceIds[k])
+		}
 	}
+
+	wgRountines.Wait()
+	wgStarted.Done()
 
 	chWg := make(chan struct{})
 	go func() {
