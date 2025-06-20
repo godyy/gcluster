@@ -45,13 +45,13 @@ type SessionConfig struct {
 	TickInterval time.Duration
 
 	// HeartbeatTimeout 心跳超时. 当 Session 属于主动端时, 心跳超时用于定期通知
-	// 对端保持连接的活跃. 每次 Tick 时会检查最近一次活跃(发送或接收Raw数据包)的流逝
+	// 对端保持连接的活跃. 每次 Tick 时会检查最近一次活跃(发送或接收字节数据)的流逝
 	// 时间, 若达到或超过 HeartbeatTimeout, 则发送心跳包.
 	// 默认值和上限均为 ReadWriteTimeout/2.
 	HeartbeatTimeout time.Duration
 
 	// InactiveTimeout 不活跃超时. 当 Session 属于被动端时, 不活跃超时用于定期检查
-	// 连接的活跃状态. 每次 Tick 时会检查最近一次活跃(发送或接收Raw数据包)的流逝
+	// 连接的活跃状态. 每次 Tick 时会检查最近一次活跃(发送或接收字节数据)的流逝
 	// 时间, 若达到或超过 InactiveTimeout, 则发送关闭请求.
 	// 值不能等于或低于 ReadWriteTimeout.
 	InactiveTimeout time.Duration
@@ -227,7 +227,7 @@ func (s *session) close(err error) {
 func (s *session) closeBaseLocked(err error, locked bool) {
 	// 若未锁定状态，则先锁定.
 	if !locked {
-		if err := s.lockState(stateStarted, false); err != nil {
+		if e := s.lockState(stateStarted, false); e != nil {
 			return
 		}
 	}
@@ -342,9 +342,9 @@ func (s *session) sendDirect(ctx context.Context, p packet, refreshActiveTime bo
 	}
 }
 
-// SendRaw 发送 Raw 数据包.
-func (s *session) SendRaw(ctx context.Context, p *RawPacket) error {
-	return s.send(ctx, p, true)
+// Send 发送字节数据.
+func (s *session) Send(ctx context.Context, b []byte) error {
+	return s.send(ctx, rawPacket(b), true)
 }
 
 // keepActive 保持活跃.
@@ -425,8 +425,8 @@ func (s *sessionLocal) RemoteNodeId() string {
 	return s.svc.NodeId()
 }
 
-func (s *sessionLocal) SendRaw(_ context.Context, p *RawPacket) error {
-	return s.svc.onSessionPacket(s, p)
+func (s *sessionLocal) Send(_ context.Context, b []byte) error {
+	return s.svc.onSessionBytes(s, b)
 }
 
 func (s *sessionLocal) start() error {

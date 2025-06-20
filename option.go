@@ -20,8 +20,8 @@ func WithLogger(logger glog.Logger) Option {
 	}
 }
 
-// WithSessionManagerOptions SessionManager 选项.
-func WithSessionManagerOptions(smOptions ...net.ServiceOption) Option {
+// WithServiceOptions Service 选项.
+func WithServiceOptions(smOptions ...net.ServiceOption) Option {
 	return func(opts *optionSet) {
 		opts.smOptions = append(opts.smOptions, smOptions...)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/godyy/gcluster/center"
 	"github.com/godyy/gcluster/net"
 	"github.com/godyy/glog"
+	"github.com/godyy/gnet"
 	"github.com/pkg/errors"
 )
 
@@ -48,12 +49,12 @@ func (c *testCenter) addNode(node *testNode) {
 }
 
 type testAgentHandler struct {
-	onNodePacket func(string, *net.RawPacket) error
+	onNodeBytes func(string, []byte) error
 }
 
-func (t *testAgentHandler) OnNodePacket(remoteNodeId string, packet *net.RawPacket) error {
-	if t.onNodePacket != nil {
-		return t.onNodePacket(remoteNodeId, packet)
+func (t *testAgentHandler) OnNodeBytes(remoteNodeId string, data []byte) error {
+	if t.onNodeBytes != nil {
+		return t.onNodeBytes(remoteNodeId, data)
 	}
 	return nil
 }
@@ -112,7 +113,7 @@ func TestAgent(t *testing.T) {
 		ListenerCreator: createListener,
 		TimerSystem:     net.NewTimerHeap(),
 	}
-	service1, err := CreateService(&ServiceConfig{
+	service1, err := CreateAgent(&AgentConfig{
 		Center:  center,
 		Net:     service1Config,
 		Handler: &testAgentHandler{},
@@ -133,7 +134,7 @@ func TestAgent(t *testing.T) {
 		ListenerCreator: createListener,
 		TimerSystem:     net.NewTimerHeap(),
 	}
-	service2, err := CreateService(&ServiceConfig{
+	service2, err := CreateAgent(&AgentConfig{
 		Center:  center,
 		Net:     service2Config,
 		Handler: &testAgentHandler{},
@@ -227,7 +228,7 @@ func TestConcurrentConnect(t *testing.T) {
 	}
 
 	handler := &testAgentHandler{
-		onNodePacket: func(_ string, p *net.RawPacket) error {
+		onNodeBytes: func(_ string, p []byte) error {
 			receives.Add(1)
 			wg.Done()
 			return nil
@@ -252,7 +253,7 @@ func TestConcurrentConnect(t *testing.T) {
 			ExpectedConcurrentSessions: 1000,
 		}
 
-		s, err := CreateService(&ServiceConfig{
+		s, err := CreateAgent(&AgentConfig{
 			Center:  center,
 			Net:     serviceCfg,
 			Handler: handler,
@@ -297,9 +298,9 @@ func TestConcurrentConnect(t *testing.T) {
 
 						connects.Add(1)
 						for i := 0; i < m; i++ {
-							p := net.NewRawPacketWithCap(8)
-							_ = p.WriteInt64(packetId.Add(1))
-							if err := a.Send2Node(context.Background(), targetNodeId, p); err != nil {
+							var buf gnet.Buffer
+							buf.WriteBigInt64(packetId.Add(1))
+							if err := a.Send2Node(context.Background(), targetNodeId, buf.Data()); err != nil {
 								logger.Errorf("%s send to %s No.%d: %s", serviceId, targetNodeId, i, err)
 							} else {
 								sends.Add(1)

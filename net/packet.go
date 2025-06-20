@@ -96,34 +96,13 @@ func (p *closeRespPacket) pass() bool {
 	return (*p)[0] != 0
 }
 
-// RawPacket 定义供用户使用的 Raw 数据包.
-type RawPacket struct {
-	gnet.Buffer
+// rawPacket 定义 Raw 数据包.
+type rawPacket []byte
+
+func (p rawPacket) Data() []byte {
+	return p
 }
 
-func (p *RawPacket) protoType() protoType {
+func (p rawPacket) protoType() protoType {
 	return protoTypeRaw
-}
-
-// NewRawPacketWithSize 创建指定大小的 RawPacket.
-func NewRawPacketWithSize(size int) *RawPacket {
-	p := &RawPacket{}
-	p.SetBuf(make([]byte, size))
-	return p
-}
-
-// NewRawPacketWithCap 创建指定容量的 RawPacket.
-func NewRawPacketWithCap(cap int) *RawPacket {
-	p := &RawPacket{}
-	p.SetBuf(make([]byte, 0, cap))
-	return p
-}
-
-// PacketManager 数据包管理器. 负责分配和回收数据包.
-type PacketManager interface {
-	// GetRawPacket 获取指定大小的 RawPacket.
-	GetRawPacket(size int) *RawPacket
-
-	// PutRawPacket 回收 RawPacket.
-	PutRawPacket(p *RawPacket)
 }

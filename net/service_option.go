@@ -5,10 +5,10 @@ import "github.com/godyy/glog"
 // ServiceOption SessionManager 选项.
 type ServiceOption func(*Service)
 
-// WithServicePacketManager PacketManager 选项.
-func WithServicePacketManager(pm PacketManager) ServiceOption {
+// WithServiceBytesManager BytesManager 选项.
+func WithServiceBytesManager(bm BytesManager) ServiceOption {
 	return func(s *Service) {
-		s.pm = pm
+		s.bm = bm
 	}
 }
 

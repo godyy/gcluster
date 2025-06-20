@@ -65,8 +65,8 @@ func (m *_handshakeHelper) regProtoPb(pt protoType, p proto.Message) {
 	}
 
 	pbType := reflect.TypeOf(p)
-	if protoType, ok := m.pbProtoType[pbType]; ok {
-		panic(fmt.Sprintf("pb-type \"%s\" -> proto-type \"%s\" already exists", pbType.Name(), protoType))
+	if pt2, ok := m.pbProtoType[pbType]; ok {
+		panic(fmt.Sprintf("pb-type \"%s\" -> proto-type \"%s\" already exists", pbType.Name(), pt2))
 	}
 
 	m.protoPbType[pt] = pbType

@@ -17,8 +17,8 @@ type Session interface {
 	// RemoteNodeId 远端节点ID.
 	RemoteNodeId() string
 
-	// SendRaw 发送 Raw 数据包.
-	SendRaw(ctx context.Context, p *RawPacket) error
+	// Send 发送字节数据.
+	Send(ctx context.Context, b []byte) error
 }
 
 // sessionImpl Session 内部实现.
@@ -73,26 +73,17 @@ func (s *sessionMap) close(err error) {
 	})
 }
 
-// SessionManager Session 管理器接口封装.
-type SessionManager interface {
-	// Start 启动.
-	Start() error
-
-	// Close 关闭.
-	Close() error
-
-	// NodeId 节点ID.
-	NodeId() string
-
-	// Connect 连接指定节点.
-	Connect(nodeId string, addr string) (Session, error)
-
-	// GetSession 获取连接 nodeId 指向 Service 的 Session.
-	GetSession(nodeId string) Session
-}
-
 // SessionHandler Session 事件处理器.
 type SessionHandler interface {
-	// OnSessionPacket 处理 Session 数据包.
-	OnSessionPacket(Session, *RawPacket) error
+	// OnSessionBytes 处理 Session 字节数据.
+	OnSessionBytes(s Session, b []byte) error
+}
+
+// BytesManager 字节缓冲区管理器.
+type BytesManager interface {
+	// GetBytes 获取指定大小的字节缓冲区.
+	GetBytes(size int) []byte
+
+	// PutBytes 回收字节缓冲区.
+	PutBytes(b []byte)
 }

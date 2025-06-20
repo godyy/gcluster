@@ -49,7 +49,7 @@ func (rw *sessionPacketReadWriter) readFull(cr gnet.ConnReader, p []byte) error 
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				if err := rw.readToBuffer(cr); err != nil {
+				if err = rw.readToBuffer(cr); err != nil {
 					return err
 				}
 				continue
@@ -67,13 +67,13 @@ func (rw *sessionPacketReadWriter) SessionReadPacket(cr gnet.ConnReader) (gnet.P
 	if err := rw.readFull(cr, head[:]); err != nil {
 		return nil, pkgerrors.WithMessage(err, "session read packet head")
 	}
-	protoType := head.protoType()
+	pt := head.protoType()
 	payloadLen := head.payloadLen()
 
 	// 获取协议类型对应的处理函数.
-	handler, ok := sessionReadPacketHandlers[protoType]
+	handler, ok := sessionReadPacketHandlers[pt]
 	if !ok {
-		return nil, fmt.Errorf("session read packet, unknown proto-type %d", protoType)
+		return nil, fmt.Errorf("session read packet, unknown proto-type %d", pt)
 	}
 
 	return handler(rw, cr, payloadLen)
@@ -138,7 +138,7 @@ func (rw *sessionPacketReadWriter) SessionWritePacket(cw gnet.ConnWriter, p gnet
 
 	// 若是 Raw 数据包, 执行回收逻辑.
 	if pp.protoType() == protoTypeRaw {
-		defer rw.svc.putRawPacket(pp.(*RawPacket))
+		defer rw.svc.putBytes(pp.(rawPacket))
 	}
 
 	// payload.
@@ -214,9 +214,9 @@ func sessionReadPacketRaw(rw *sessionPacketReadWriter, cr gnet.ConnReader, paylo
 	if payloadLen > uint32(rw.svc.getSessionConfig().MaxPacketLength) {
 		return nil, fmt.Errorf("session read raw packet, packet length %d over limited", payloadLen)
 	}
-	p := rw.svc.getRawPacket(int(payloadLen))
-	if err := rw.readFull(cr, p.Data()); err != nil {
+	b := rw.svc.getBytes(int(payloadLen))
+	if err := rw.readFull(cr, b); err != nil {
 		return nil, pkgerrors.WithMessage(err, "session read raw packet body")
 	}
-	return p, nil
+	return rawPacket(b), nil
 }

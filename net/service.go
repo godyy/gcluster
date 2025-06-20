@@ -84,7 +84,7 @@ func (c *ServiceConfig) init() error {
 type Service struct {
 	cfg            *ServiceConfig // 服务配置.
 	sessionHandler SessionHandler // Session 事件处理器.
-	pm             PacketManager  // 数据包管理器, 可选.
+	bm             BytesManager   // 字节缓冲区管理器, 可选.
 	listener       net.Listener   // 网络监听器.
 	rootLogger     glog.Logger    // 根日志工具, 所有其它日志工具均是从其复制而来.
 	logger         glog.Logger    // 日志工具.
@@ -292,9 +292,9 @@ func (s *Service) getSession(nodeId string) Session {
 	return nil
 }
 
-// onSessionPacket 处理 Session 数据包.
-func (s *Service) onSessionPacket(session Session, p *RawPacket) error {
-	return s.sessionHandler.OnSessionPacket(session, p)
+// onSessionBytes 处理 Session 字节数据.
+func (s *Service) onSessionBytes(session Session, b []byte) error {
+	return s.sessionHandler.OnSessionBytes(session, b)
 }
 
 // onSessionClosed 处理 Session 关闭.
@@ -302,18 +302,18 @@ func (s *Service) onSessionClosed(session sessionImpl, err error) {
 	s.sessions.compareAndDelete(session)
 }
 
-// getRawPacket 获取 RawPacket.
-func (s *Service) getRawPacket(size int) *RawPacket {
-	if s.pm != nil {
-		return s.pm.GetRawPacket(size)
+// getBytes 获取字节缓冲区.
+func (s *Service) getBytes(size int) []byte {
+	if s.bm != nil {
+		return s.bm.GetBytes(size)
 	}
-	return NewRawPacketWithSize(size)
+	return make([]byte, size)
 }
 
-// putRawPacket 回收 RawPacket.
-func (s *Service) putRawPacket(p *RawPacket) {
-	if s.pm != nil {
-		s.pm.PutRawPacket(p)
+// putBytes 回收字节缓冲区.
+func (s *Service) putBytes(b []byte) {
+	if s.bm != nil {
+		s.bm.PutBytes(b)
 	}
 }
 

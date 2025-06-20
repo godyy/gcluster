@@ -76,9 +76,9 @@ func sessionHandleCloseResp(s *session, p *closeRespPacket) error {
 }
 
 // sessionHandleRaw 处理 Raw 包.
-func sessionHandleRaw(s *session, p *RawPacket) error {
+func sessionHandleRaw(s *session, p rawPacket) error {
 	s.mutex.RLock()
 	s.refreshActiveTime()
 	s.mutex.RUnlock()
-	return s.svc.onSessionPacket(s, p)
+	return s.svc.onSessionBytes(s, p)
 }

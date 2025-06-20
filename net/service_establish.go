@@ -21,7 +21,7 @@ func (s *Service) Connect(nodeId string, addr string) (session Session, err erro
 		return
 	}
 
-	if err := s.lockState(stateStarted, true); err != nil {
+	if err = s.lockState(stateStarted, true); err != nil {
 		return nil, err
 	}
 	establishment := s.getOrCreateEstablishment(nodeId)
@@ -413,11 +413,11 @@ func (s *Service) passiveEstablishHandshake(es *establishment, conn net.Conn) {
 		s.passiveEstablishFail(es, conn, ErrHandshakeRejected)
 
 	default:
-		protoType, _ := handshakeHelper.getProtoType(resp)
+		pt, _ := handshakeHelper.getProtoType(resp)
 		s.logger.ErrorFields("invalid handshake accepted response",
 			lfdNetRemoteAddr(conn.RemoteAddr()),
 			lfdRemoteNodeId(es.remoteNodeId),
-			lfdProtoTypeNumber(protoType))
+			lfdProtoTypeNumber(pt))
 		s.passiveEstablishFail(es, conn, ErrReadHandshakeResp)
 	}
 }

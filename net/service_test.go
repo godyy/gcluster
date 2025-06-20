@@ -13,11 +13,12 @@ import (
 	"time"
 
 	"github.com/godyy/glog"
+	"github.com/godyy/gnet"
 )
 
 type testServiceHandler struct {
 	onNewSession    func(Session)
-	onSessionPacket func(Session, *RawPacket) error
+	onSessionBytes  func(Session, []byte) error
 	onSessionClosed func(Session, error)
 }
 
@@ -27,9 +28,9 @@ func (h *testServiceHandler) OnNewSession(s Session) {
 	}
 }
 
-func (h *testServiceHandler) OnSessionPacket(s Session, data *RawPacket) error {
-	if h.onSessionPacket != nil {
-		return h.onSessionPacket(s, data)
+func (h *testServiceHandler) OnSessionBytes(s Session, data []byte) error {
+	if h.onSessionBytes != nil {
+		return h.onSessionBytes(s, data)
 	}
 	return nil
 }
@@ -253,7 +254,7 @@ func TestServiceSession(t *testing.T) {
 	}
 
 	s1, err := CreateService(s1Cfg, &testServiceHandler{
-		onSessionPacket: func(s Session, p *RawPacket) error {
+		onSessionBytes: func(s Session, p []byte) error {
 			receives.Add(1)
 			wg.Done()
 			return nil
@@ -264,7 +265,7 @@ func TestServiceSession(t *testing.T) {
 	}
 
 	s2, err := CreateService(s2Cfg, &testServiceHandler{
-		onSessionPacket: func(s Session, p *RawPacket) error {
+		onSessionBytes: func(s Session, p []byte) error {
 			receives.Add(1)
 			wg.Done()
 			return nil
@@ -296,9 +297,10 @@ func TestServiceSession(t *testing.T) {
 					if err != nil {
 						logger.Errorf("node1 connect node2: %s", err)
 					} else {
-						p := NewRawPacketWithCap(8)
-						_ = p.WriteInt64(packetId.Add(1))
-						if err := session.SendRaw(context.Background(), p); err != nil {
+						var buf gnet.Buffer
+						buf.Grow(8)
+						buf.WriteInt64(packetId.Add(1))
+						if err := session.Send(context.Background(), buf.Data()); err != nil {
 							// logger.Errorf("%s send to %s No.%d: %s", service1.NodeId(), service2.NodeId(), i, err)
 						} else {
 							sends.Add(1)
@@ -319,9 +321,10 @@ func TestServiceSession(t *testing.T) {
 					if err != nil {
 						logger.Errorf("node2 connect node1: %s", err)
 					} else {
-						p := NewRawPacketWithCap(8)
-						_ = p.WriteInt64(packetId.Add(1))
-						if err := session.SendRaw(context.Background(), p); err != nil {
+						var buf gnet.Buffer
+						buf.Grow(8)
+						buf.WriteInt64(packetId.Add(1))
+						if err := session.Send(context.Background(), buf.Data()); err != nil {
 							// logger.Errorf("%s send to %s No.%d: %s", service2.NodeId(), service1.NodeId(), i, err)
 						} else {
 							sends.Add(1)
@@ -401,7 +404,7 @@ func TestServiceConcurrentConnect(t *testing.T) {
 	}
 
 	handler := &testServiceHandler{
-		onSessionPacket: func(s Session, p *RawPacket) error {
+		onSessionBytes: func(s Session, p []byte) error {
 			receives.Add(1)
 			wg.Done()
 			return nil
@@ -463,9 +466,10 @@ func TestServiceConcurrentConnect(t *testing.T) {
 						}
 
 						for i := 0; i < m; i++ {
-							p := NewRawPacketWithCap(8)
-							_ = p.WriteInt64(packetId.Add(1))
-							if err := session.SendRaw(context.Background(), p); err != nil {
+							var buf gnet.Buffer
+							buf.Grow(8)
+							buf.WriteInt64(packetId.Add(1))
+							if err := session.Send(context.Background(), buf.Data()); err != nil {
 								logger.Errorf("%s send to %s No.%d: %s", s1.NodeId(), s2.NodeId(), i, err)
 							} else {
 								sends.Add(1)
