@@ -329,6 +329,13 @@ func (s *session) send(ctx context.Context, p packet, refreshActiveTime bool) er
 
 // sendDirect 直接发送数据包.
 func (s *session) sendDirect(ctx context.Context, p packet, refreshActiveTime bool) error {
+	// 若 ctx 未携带 deadline, 则使用默认超时.
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.svc.config().DefCtxTimeout)
+		defer cancel()
+	}
+
 	select {
 	case s.pendingPackets <- p:
 		if refreshActiveTime {
