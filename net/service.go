@@ -263,6 +263,8 @@ func (s *Service) Close() error {
 	s.state = stateClosed
 	s.unlockState(false)
 
+	close(s.cClosed)
+
 	// 关闭监听器.
 	if s.listener != nil {
 		_ = s.listener.Close()
@@ -322,7 +324,7 @@ func (s *Service) startSessionTicker(session Session) TimerId {
 	if err := s.lockState(stateStarted, true); err != nil {
 		return TimerIdNone
 	}
-	defer s.unlockState(true)
+	s.unlockState(true)
 
 	return s.cfg.TimerSystem.StartTimer(s.cfg.Session.TickInterval, true, session.RemoteNodeId(), s.onSessionTicker)
 }
@@ -332,7 +334,7 @@ func (s *Service) onSessionTicker(args *TimerArgs) {
 	if err := s.lockState(stateStarted, true); err != nil {
 		return
 	}
-	defer s.unlockState(true)
+	s.unlockState(true)
 
 	select {
 	case s.cTickSessions <- args.Args.(string):
@@ -345,7 +347,7 @@ func (s *Service) stopSessionTicker(tid TimerId) {
 	if err := s.lockState(stateStarted, true); err != nil {
 		return
 	}
-	defer s.unlockState(true)
+	s.unlockState(true)
 
 	s.cfg.TimerSystem.StopTimer(tid)
 }

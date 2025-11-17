@@ -42,6 +42,7 @@ func (s *Service) Connect(nodeId string, addr string) (session Session, err erro
 
 // listen 网络监听逻辑.
 func (s *Service) listen() {
+	s.logger.Infof("listening at %s", s.cfg.Addr)
 	for !s.isClosed() {
 		conn, err := s.listener.Accept()
 		if err != nil {
