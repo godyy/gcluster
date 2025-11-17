@@ -286,7 +286,7 @@ func (s *session) tickActiveEnd() {
 	s.logger.Debug("send heartbeat")
 	p := &heartbeatPacket{}
 	p.setPing()
-	if err := s.send(context.Background(), p, false); err != nil {
+	if err := s.sendDirect(context.Background(), p, false); err != nil {
 		s.logger.ErrorFields("send heartbeat", lfdError(err))
 	}
 }
@@ -319,6 +319,18 @@ func (s *session) send(ctx context.Context, p packet, refreshActiveTime bool) er
 		return ErrPacketLengthOverflow
 	}
 
+	// 优先检查ctx是否取消
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// 若ctx未设置deadline, 附加默认超时.
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.svc.config().DefCtxTimeout)
+		defer cancel()
+	}
+
 	if err := s.lockState(stateStarted, true); err != nil {
 		return err
 	}
@@ -329,6 +341,11 @@ func (s *session) send(ctx context.Context, p packet, refreshActiveTime bool) er
 
 // sendDirect 直接发送数据包.
 func (s *session) sendDirect(ctx context.Context, p packet, refreshActiveTime bool) error {
+	// 优先判断ctx是否已取消.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	// 若 ctx 未携带 deadline, 则使用默认超时.
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
