@@ -121,7 +121,7 @@ type session struct {
 	logger       glog.Logger // 日志工具.
 
 	mutex             sync.RWMutex  // RWMutex for following.
-	state             int8          // 状态.
+	state             int32         // 状态.
 	chClose           chan struct{} // 关闭信号.
 	core              *gnet.Session // 核心实现.
 	pendingPackets    chan packet   // 待发送数据包队列.
@@ -154,23 +154,12 @@ func (s *session) RemoteNodeId() string {
 	return s.remoteNodeId
 }
 
-// lockState 锁定状态.
-func (s *session) lockState(need int8, read bool) error {
-	if read {
-		s.mutex.RLock()
-	} else {
-		s.mutex.Lock()
-	}
+// checkState 根据所需状态检查 session 的状态.
+func (s *session) checkState(need int32) error {
+	state := atomic.LoadInt32(&s.state)
 
-	state := s.state
-	if state == need {
+	if need == state {
 		return nil
-	}
-
-	if read {
-		s.mutex.RUnlock()
-	} else {
-		s.mutex.Unlock()
 	}
 
 	switch state {
@@ -183,6 +172,26 @@ func (s *session) lockState(need int8, read bool) error {
 	default:
 		panic(fmt.Sprintf("invalid session state %d", state))
 	}
+}
+
+// lockState 锁定状态.
+func (s *session) lockState(need int32, read bool) error {
+	if read {
+		s.mutex.RLock()
+	} else {
+		s.mutex.Lock()
+	}
+
+	if err := s.checkState(need); err != nil {
+		if read {
+			s.mutex.RUnlock()
+		} else {
+			s.mutex.Unlock()
+		}
+		return err
+	}
+
+	return nil
 }
 
 // unlockState 解锁状态.
@@ -201,17 +210,15 @@ func (s *session) start() error {
 	}
 	defer s.unlockState(false)
 
-	// 启动 core. 若出错，直接关闭 session 并返回错误.
-	if err := s.core.Start(); err != nil {
-		s.core = nil
-		close(s.chClose)
-		s.state = stateClosed
-		return err
-	}
-
 	s.refreshActiveTime()
 	s.tickTimerId = s.svc.startSessionTicker(s)
 	s.state = stateStarted
+
+	// 启动 core. 若出错，直接关闭 session 并返回错误.
+	if err := s.core.Start(); err != nil {
+		s.close(err)
+		return err
+	}
 
 	s.logger.Info("started")
 
@@ -225,26 +232,29 @@ func (s *session) close(err error) {
 
 // closeBaseLocked 基于是否已锁定状态关闭会话.
 func (s *session) closeBaseLocked(err error, locked bool) {
-	close(s.chClose)
-
-	// 若未锁定状态，则先锁定.
-	if !locked {
-		if e := s.lockState(stateStarted, false); e != nil {
+	// 尝试切换到关闭状态
+	// 切换成功才最终执行关闭逻辑
+	for {
+		state := atomic.LoadInt32(&s.state)
+		if state == stateClosed {
 			return
+		}
+		if atomic.CompareAndSwapInt32(&s.state, state, stateClosed) {
+			break
 		}
 	}
 
-	// 保证重入时逻辑的正确性，优先更新状态.
-	// 为了避免死锁，先解锁. 因为关闭 core 时，可能会触发 SessionOnClosed 回调，
-	// 既而导致重入 close.
-	s.state = stateClosed
-
-	s.unlockState(false)
+	// 若提前锁定了状态, 解锁
+	// 这里必然是写锁
+	if locked {
+		s.unlockState(false)
+	}
 
 	// 执行关闭逻辑.
 	// 将 core 置为空是为了解除环引用，确保不回造成内存泄漏.
 	// 因为 gnet.Session 的实现为了逻辑简单，并未在关闭时
 	// 重置 handler.
+	close(s.chClose)
 	_ = s.core.Close()
 	s.core = nil
 	s.svc.stopSessionTicker(s.tickTimerId)
@@ -258,10 +268,9 @@ func (s *session) closeBaseLocked(err error, locked bool) {
 
 // tick Tick 逻辑.
 func (s *session) tick() {
-	if err := s.lockState(stateStarted, true); err != nil {
+	if s.checkState(stateStarted) != nil {
 		return
 	}
-	defer s.unlockState(true)
 
 	if s.activeEnd {
 		s.tickActiveEnd()
@@ -332,10 +341,10 @@ func (s *session) send(ctx context.Context, p packet, refreshActiveTime bool) er
 		defer cancel()
 	}
 
-	if err := s.lockState(stateStarted, true); err != nil {
-		return err
+	// 尝试在非加锁的情况下检查状态.
+	if err := s.checkState(stateStarted); err != nil {
+		return nil
 	}
-	defer s.unlockState(true)
 
 	return s.sendDirect(ctx, p, refreshActiveTime)
 }
@@ -374,11 +383,9 @@ func (s *session) Send(ctx context.Context, b []byte) error {
 
 // keepActive 保持活跃.
 func (s *session) keepActive() error {
-	if err := s.lockState(stateStarted, true); err != nil {
+	if err := s.checkState(stateStarted); err != nil {
 		return err
 	}
-	defer s.unlockState(true)
-
 	s.refreshActiveTime()
 	return nil
 }
