@@ -122,9 +122,9 @@ type session struct {
 
 	mutex             sync.RWMutex  // RWMutex for following.
 	state             int8          // 状态.
+	chClose           chan struct{} // 关闭信号.
 	core              *gnet.Session // 核心实现.
 	pendingPackets    chan packet   // 待发送数据包队列.
-	chClosed          chan struct{} // 关闭 chan.
 	tickTimerId       TimerId       // Tick 定时器ID.
 	lastActiveTime    int64         // 最近一次活跃的时间（发送/接收消息）.
 	lastHeartbeatTime int64         // 最近一次心跳的时间.
@@ -138,7 +138,7 @@ func newSession(svc *Service, remoteNodeId string, activeEnd bool, conn net.Conn
 		activeEnd:      activeEnd,
 		pendingPackets: make(chan packet, svc.getSessionConfig().PendingPacketQueueSize),
 		state:          stateInit,
-		chClosed:       make(chan struct{}),
+		chClose:        make(chan struct{}),
 		logger:         logger.Named("session").WithFields(lfdRemoteNodeId(remoteNodeId), lfdActiveEnd(activeEnd)),
 		tickTimerId:    TimerIdNone,
 	}
@@ -204,7 +204,7 @@ func (s *session) start() error {
 	// 启动 core. 若出错，直接关闭 session 并返回错误.
 	if err := s.core.Start(); err != nil {
 		s.core = nil
-		close(s.chClosed)
+		close(s.chClose)
 		s.state = stateClosed
 		return err
 	}
@@ -225,6 +225,8 @@ func (s *session) close(err error) {
 
 // closeBaseLocked 基于是否已锁定状态关闭会话.
 func (s *session) closeBaseLocked(err error, locked bool) {
+	close(s.chClose)
+
 	// 若未锁定状态，则先锁定.
 	if !locked {
 		if e := s.lockState(stateStarted, false); e != nil {
@@ -245,7 +247,6 @@ func (s *session) closeBaseLocked(err error, locked bool) {
 	// 重置 handler.
 	_ = s.core.Close()
 	s.core = nil
-	close(s.chClosed)
 	s.svc.stopSessionTicker(s.tickTimerId)
 	s.tickTimerId = TimerIdNone
 
@@ -359,7 +360,7 @@ func (s *session) sendDirect(ctx context.Context, p packet, refreshActiveTime bo
 			s.refreshActiveTime()
 		}
 		return nil
-	case <-s.chClosed:
+	case <-s.chClose:
 		return ErrSessionClosed
 	case <-ctx.Done():
 		return ctx.Err()
@@ -407,7 +408,7 @@ func (s *session) SessionPendingPacket() (p gnet.Packet, more bool, err error) {
 		} else {
 			return p, len(s.pendingPackets) > 0, nil
 		}
-	case <-s.chClosed:
+	case <-s.chClose:
 		return nil, false, ErrSessionClosed
 	}
 }
