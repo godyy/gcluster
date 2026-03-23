@@ -1,7 +1,6 @@
 package gcluster
 
 import (
-	"context"
 	"errors"
 
 	"github.com/godyy/gcluster/center"
@@ -94,18 +93,13 @@ func (a *Agent) ConnectNode(nodeId string) (net.Session, error) {
 }
 
 // Send2Node 向集群中 nodeId 指向的节点发送字节数据.
-func (a *Agent) Send2Node(ctx context.Context, nodeId string, data []byte) error {
-	// 优先判断ctx是否取消
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
+func (a *Agent) Send2Node(nodeId string, data []byte) error {
 	session, err := a.ConnectNode(nodeId)
 	if err != nil {
 		return pkgerrors.WithMessage(err, "connect node")
 	}
 
-	return session.Send(ctx, data)
+	return session.Send(data)
 }
 
 // OnSessionBytes 处理从 session 接收到的字节数据.

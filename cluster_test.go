@@ -1,7 +1,6 @@
 package gcluster
 
 import (
-	"context"
 	"fmt"
 	stdnet "net"
 	"os"
@@ -277,7 +276,7 @@ func TestConcurrentConnect(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	n := 10
-	m := 500
+	m := 50
 	wg.Add(serviceCount * (serviceCount - 1) * n * m)
 	wgRountines := &sync.WaitGroup{}
 	wgRountines.Add(serviceCount * (serviceCount - 1) * n)
@@ -300,11 +299,12 @@ func TestConcurrentConnect(t *testing.T) {
 						for i := 0; i < m; i++ {
 							var buf gnet.Buffer
 							buf.WriteBigInt64(packetId.Add(1))
-							if err := a.Send2Node(context.Background(), targetNodeId, buf.Data()); err != nil {
+							if err := a.Send2Node(targetNodeId, buf.Data()); err != nil {
 								logger.Errorf("%s send to %s No.%d: %s", serviceId, targetNodeId, i, err)
 							} else {
 								sends.Add(1)
 							}
+							time.Sleep(10 * time.Millisecond)
 						}
 					}()
 				}

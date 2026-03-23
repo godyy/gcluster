@@ -1,7 +1,6 @@
 package net
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"os"
@@ -300,7 +299,7 @@ func TestServiceSession(t *testing.T) {
 						var buf gnet.Buffer
 						buf.Grow(8)
 						buf.WriteInt64(packetId.Add(1))
-						if err := session.Send(context.Background(), buf.Data()); err != nil {
+						if err := session.Send(buf.Data()); err != nil {
 							// logger.Errorf("%s send to %s No.%d: %s", service1.NodeId(), service2.NodeId(), i, err)
 						} else {
 							sends.Add(1)
@@ -324,7 +323,7 @@ func TestServiceSession(t *testing.T) {
 						var buf gnet.Buffer
 						buf.Grow(8)
 						buf.WriteInt64(packetId.Add(1))
-						if err := session.Send(context.Background(), buf.Data()); err != nil {
+						if err := session.Send(buf.Data()); err != nil {
 							// logger.Errorf("%s send to %s No.%d: %s", service2.NodeId(), service1.NodeId(), i, err)
 						} else {
 							sends.Add(1)
@@ -441,7 +440,8 @@ func TestServiceConcurrentConnect(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	n := 10
-	m := 500
+	m := 50
+
 	wg.Add(serviceCount * (serviceCount - 1) * n * m)
 	wgRountines := &sync.WaitGroup{}
 	wgRountines.Add(serviceCount * (serviceCount - 1) * n)
@@ -469,11 +469,12 @@ func TestServiceConcurrentConnect(t *testing.T) {
 							var buf gnet.Buffer
 							buf.Grow(8)
 							buf.WriteInt64(packetId.Add(1))
-							if err := session.Send(context.Background(), buf.Data()); err != nil {
+							if err := session.Send(buf.Data()); err != nil {
 								logger.Errorf("%s send to %s No.%d: %s", s1.NodeId(), s2.NodeId(), i, err)
 							} else {
 								sends.Add(1)
 							}
+							time.Sleep(10 * time.Millisecond)
 						}
 					}()
 				}

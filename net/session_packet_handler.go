@@ -1,7 +1,6 @@
 package net
 
 import (
-	"context"
 	"fmt"
 )
 
@@ -30,7 +29,7 @@ func sessionHandleHeartbeat(s *session, p *heartbeatPacket) error {
 	if ping {
 		s.logger.Debug("handle ping")
 		p.setPong()
-		return s.send(context.Background(), p, false)
+		return s.send(p, false)
 	} else {
 		s.logger.Debug("receive pong")
 	}
@@ -52,7 +51,7 @@ func sessionHandleCloseReq(s *session, p *closeReqPacket) error {
 		s.logger.Info("handle close req but not inactive")
 		resp := &closeRespPacket{}
 		resp.setPass(false)
-		_ = s.sendDirect(context.Background(), resp, false)
+		_ = s.sendDirect(resp, false)
 		return nil
 	}
 

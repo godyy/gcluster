@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/godyy/glog"
 	pkgerrors "github.com/pkg/errors"
@@ -37,11 +36,6 @@ type ServiceConfig struct {
 	// ExpectedConcurrentSessions 预期同时存在的 Session 数量.
 	// 默认值为 10.
 	ExpectedConcurrentSessions int
-
-	// DefCtxTimeout 默认的ctx超时. 当传递的ctx中未携带dealline时, 底层会使用该时
-	// 间给ctx附加一个默认的dealine, 避免长时间等待.
-	// 默认值 5s.
-	DefCtxTimeout time.Duration
 }
 
 func (c *ServiceConfig) init() error {
@@ -79,10 +73,6 @@ func (c *ServiceConfig) init() error {
 
 	if c.ExpectedConcurrentSessions <= 0 {
 		c.ExpectedConcurrentSessions = 10
-	}
-
-	if c.DefCtxTimeout <= 0 {
-		c.DefCtxTimeout = 5 * time.Second
 	}
 
 	return nil

@@ -28,6 +28,9 @@ var ErrInactiveClosed = errors.New("inactive closed")
 // ErrPacketLengthOverflow 数据包长度溢出.
 var ErrPacketLengthOverflow = errors.New("packet length overflow")
 
+// ErrPendingPacketsFull 待发送数据包队列已满.
+var ErrPendingPacketsFull = errors.New("pending packets queue full")
+
 // ErrConnectRemote 连接远端失败.
 var ErrConnectRemote = errors.New("connect remote failed")
 

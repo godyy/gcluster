@@ -1,7 +1,6 @@
 package net
 
 import (
-	"context"
 	"net"
 	"sync"
 )
@@ -18,7 +17,7 @@ type Session interface {
 	RemoteNodeId() string
 
 	// Send 发送字节数据.
-	Send(ctx context.Context, b []byte) error
+	Send(b []byte) error
 }
 
 // sessionImpl Session 内部实现.

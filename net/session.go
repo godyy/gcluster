@@ -1,7 +1,6 @@
 package net
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -296,7 +295,7 @@ func (s *session) tickActiveEnd() {
 	s.logger.Debug("send heartbeat")
 	p := &heartbeatPacket{}
 	p.setPing()
-	if err := s.sendDirect(context.Background(), p, false); err != nil {
+	if err := s.sendDirect(p, false); err != nil {
 		s.logger.ErrorFields("send heartbeat", lfdError(err))
 	}
 }
@@ -309,7 +308,7 @@ func (s *session) tickPassiveEnd() {
 	}
 
 	// 发送关闭请求.
-	if err := s.sendDirect(context.Background(), &closeReqPacket{}, false); err != nil {
+	if err := s.sendDirect(&closeReqPacket{}, false); err != nil {
 		s.logger.ErrorFields("send close req", lfdError(err))
 	} else {
 		s.logger.Debug("send close req")
@@ -317,10 +316,7 @@ func (s *session) tickPassiveEnd() {
 }
 
 // send 发送数据底层接口.
-func (s *session) send(ctx context.Context, p packet, refreshActiveTime bool) error {
-	if ctx == nil {
-		return errors.New("context nil")
-	}
+func (s *session) send(p packet, refreshActiveTime bool) error {
 	if p == nil {
 		return errors.New("packet nil")
 	}
@@ -329,40 +325,16 @@ func (s *session) send(ctx context.Context, p packet, refreshActiveTime bool) er
 		return ErrPacketLengthOverflow
 	}
 
-	// 优先检查ctx是否取消
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	// 若ctx未设置deadline, 附加默认超时.
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.svc.config().DefCtxTimeout)
-		defer cancel()
-	}
-
 	// 尝试在非加锁的情况下检查状态.
 	if err := s.checkState(stateStarted); err != nil {
 		return nil
 	}
 
-	return s.sendDirect(ctx, p, refreshActiveTime)
+	return s.sendDirect(p, refreshActiveTime)
 }
 
 // sendDirect 直接发送数据包.
-func (s *session) sendDirect(ctx context.Context, p packet, refreshActiveTime bool) error {
-	// 优先判断ctx是否已取消.
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	// 若 ctx 未携带 deadline, 则使用默认超时.
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.svc.config().DefCtxTimeout)
-		defer cancel()
-	}
-
+func (s *session) sendDirect(p packet, refreshActiveTime bool) error {
 	select {
 	case s.pendingPackets <- p:
 		if refreshActiveTime {
@@ -371,14 +343,14 @@ func (s *session) sendDirect(ctx context.Context, p packet, refreshActiveTime bo
 		return nil
 	case <-s.chClose:
 		return ErrSessionClosed
-	case <-ctx.Done():
-		return ctx.Err()
+	default:
+		return ErrPendingPacketsFull
 	}
 }
 
 // Send 发送字节数据.
-func (s *session) Send(ctx context.Context, b []byte) error {
-	return s.send(ctx, rawPacket(b), true)
+func (s *session) Send(b []byte) error {
+	return s.send(rawPacket(b), true)
 }
 
 // keepActive 保持活跃.
@@ -457,7 +429,7 @@ func (s *sessionLocal) RemoteNodeId() string {
 	return s.svc.NodeId()
 }
 
-func (s *sessionLocal) Send(_ context.Context, b []byte) error {
+func (s *sessionLocal) Send(b []byte) error {
 	return s.svc.onSessionBytes(s, b)
 }
 
