@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/godyy/glog"
 	"github.com/godyy/gnet"
+	"github.com/pkg/errors"
 )
 
 type testServiceHandler struct {
@@ -187,7 +189,7 @@ func TestServiceSession(t *testing.T) {
 	})
 
 	sessionCfg := SessionConfig{
-		PendingPacketQueueSize: 10,
+		PendingPacketQueueSize: 10000,
 		MaxPacketLength:        1024,
 		ReadBufSize:            10 * 1024,
 		WriteBufSize:           10 * 1024,
@@ -287,6 +289,7 @@ func TestServiceSession(t *testing.T) {
 	const n = 2000
 	const k = 1000
 
+	wg.Add(n * k)
 	go func() {
 		for i := 0; i < n; i++ {
 			go func() {
@@ -299,18 +302,25 @@ func TestServiceSession(t *testing.T) {
 						var buf gnet.Buffer
 						buf.Grow(8)
 						buf.WriteInt64(packetId.Add(1))
-						if err := session.Send(buf.Data()); err != nil {
-							// logger.Errorf("%s send to %s No.%d: %s", service1.NodeId(), service2.NodeId(), i, err)
-						} else {
-							sends.Add(1)
+						for {
+							if err := session.Send(buf.Data()); err != nil {
+								if errors.Is(err, ErrPendingPacketsFull) {
+									runtime.Gosched()
+									continue
+								}
+								logger.Errorf("%s send to %s No.%d: %s", s1.NodeId(), s2.NodeId(), i, err)
+							} else {
+								sends.Add(1)
+								break
+							}
 						}
 					}
 				}
 			}()
 		}
 	}()
-	wg.Add(n * k)
 
+	wg.Add(n * k)
 	go func() {
 		for i := 0; i < n; i++ {
 			go func() {
@@ -323,17 +333,23 @@ func TestServiceSession(t *testing.T) {
 						var buf gnet.Buffer
 						buf.Grow(8)
 						buf.WriteInt64(packetId.Add(1))
-						if err := session.Send(buf.Data()); err != nil {
-							// logger.Errorf("%s send to %s No.%d: %s", service2.NodeId(), service1.NodeId(), i, err)
-						} else {
-							sends.Add(1)
+						for {
+							if err := session.Send(buf.Data()); err != nil {
+								if errors.Is(err, ErrPendingPacketsFull) {
+									runtime.Gosched()
+									continue
+								}
+								logger.Errorf("%s send to %s No.%d: %s", s2.NodeId(), s1.NodeId(), i, err)
+							} else {
+								sends.Add(1)
+								break
+							}
 						}
 					}
 				}
 			}()
 		}
 	}()
-	wg.Add(n * k)
 
 	chWg := make(chan struct{})
 	go func() {
@@ -371,15 +387,16 @@ func TestServiceConcurrentConnect(t *testing.T) {
 	})
 
 	sessionCfg := SessionConfig{
-		PendingPacketQueueSize: 100,
+		PendingPacketQueueSize: 1000,
 		MaxPacketLength:        512,
 		ReadBufSize:            1024,
 		WriteBufSize:           1024,
-		ReadWriteTimeout:       60 * time.Second,
+		ReadWriteTimeout:       1 * time.Hour,
 		BatchWriteLimit:        50,
 		BatchWriteTimeLmit:     1 * time.Millisecond,
-		TickInterval:           10 * time.Second,
-		InactiveTimeout:        5 * time.Minute,
+		TickInterval:           5 * time.Second,
+		InactiveTimeout:        2 * time.Hour,
+		HeartbeatTimeout:       10 * time.Minute,
 	}
 
 	dialer := func(addr string) (net.Conn, error) {
@@ -456,25 +473,33 @@ func TestServiceConcurrentConnect(t *testing.T) {
 				for i := 0; i < n; i++ {
 					go func() {
 						wgRountines.Done()
-						wgStarted.Wait()
 
 						connects.Add(1)
 						session, err := s1.Connect(s2.NodeId(), s2.Addr())
 						if err != nil {
 							logger.Errorf("%s connect %s: %s", s1.NodeId(), s2.NodeId(), err)
+							wgRountines.Done()
 							return
 						}
+
+						wgStarted.Wait()
 
 						for i := 0; i < m; i++ {
 							var buf gnet.Buffer
 							buf.Grow(8)
 							buf.WriteInt64(packetId.Add(1))
-							if err := session.Send(buf.Data()); err != nil {
-								logger.Errorf("%s send to %s No.%d: %s", s1.NodeId(), s2.NodeId(), i, err)
-							} else {
-								sends.Add(1)
+							for {
+								if err := session.Send(buf.Data()); err != nil {
+									if errors.Is(err, ErrPendingPacketsFull) {
+										runtime.Gosched()
+										continue
+									}
+									logger.Errorf("%s send to %s No.%d: %s", s1.NodeId(), s2.NodeId(), i, err)
+								} else {
+									sends.Add(1)
+									break
+								}
 							}
-							time.Sleep(10 * time.Millisecond)
 						}
 					}()
 				}

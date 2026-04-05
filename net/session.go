@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/godyy/glog"
+	"github.com/godyy/gmpsc"
 	"github.com/godyy/gnet"
 )
 
@@ -119,27 +120,30 @@ type session struct {
 	activeEnd    bool        // 是否主动的一端（需要发送心跳请求）.
 	logger       glog.Logger // 日志工具.
 
-	mutex             sync.RWMutex  // RWMutex for following.
-	state             int32         // 状态.
-	chClose           chan struct{} // 关闭信号.
-	core              *gnet.Session // 核心实现.
-	pendingPackets    chan packet   // 待发送数据包队列.
-	tickTimerId       TimerId       // Tick 定时器ID.
-	lastActiveTime    int64         // 最近一次活跃的时间（发送/接收消息）.
-	lastHeartbeatTime int64         // 最近一次心跳的时间.
+	mutex                sync.RWMutex         // RWMutex for following.
+	state                int32                // 状态.
+	chClose              chan struct{}        // 关闭信号.
+	core                 *gnet.Session        // 核心实现.
+	pendingPackets       *gmpsc.Queue[packet] // 待发送数据包队列.
+	pendingPacketsNotify chan struct{}        // 待发送数据包队列通知.
+	waitNotify           atomic.Bool          // 是否正在等待通知.
+	tickTimerId          TimerId              // Tick 定时器ID.
+	lastActiveTime       int64                // 最近一次活跃的时间（发送/接收消息）.
+	lastHeartbeatTime    int64                // 最近一次心跳的时间.
 }
 
 // newSession 构造 session.
 func newSession(svc *Service, remoteNodeId string, activeEnd bool, conn net.Conn, logger glog.Logger) *session {
 	s := &session{
-		remoteNodeId:   remoteNodeId,
-		svc:            svc,
-		activeEnd:      activeEnd,
-		pendingPackets: make(chan packet, svc.getSessionConfig().PendingPacketQueueSize),
-		state:          stateInit,
-		chClose:        make(chan struct{}),
-		logger:         logger.Named("session").WithFields(lfdRemoteNodeId(remoteNodeId), lfdActiveEnd(activeEnd)),
-		tickTimerId:    TimerIdNone,
+		remoteNodeId:         remoteNodeId,
+		svc:                  svc,
+		activeEnd:            activeEnd,
+		pendingPackets:       gmpsc.NewQueue[packet](512, svc.config().Session.PendingPacketQueueSize),
+		pendingPacketsNotify: make(chan struct{}, 1),
+		state:                stateInit,
+		chClose:              make(chan struct{}),
+		logger:               logger.Named("session").WithFields(lfdRemoteNodeId(remoteNodeId), lfdActiveEnd(activeEnd)),
+		tickTimerId:          TimerIdNone,
 	}
 
 	packetReadWriter := newSessionPacketReadWriter(svc)
@@ -256,6 +260,7 @@ func (s *session) closeBaseLocked(err error, locked bool) {
 	close(s.chClose)
 	_ = s.core.Close()
 	s.core = nil
+	s.pendingPackets.Close()
 	s.svc.stopSessionTicker(s.tickTimerId)
 	s.tickTimerId = TimerIdNone
 
@@ -327,7 +332,7 @@ func (s *session) send(p packet, refreshActiveTime bool) error {
 
 	// 尝试在非加锁的情况下检查状态.
 	if err := s.checkState(stateStarted); err != nil {
-		return nil
+		return err
 	}
 
 	return s.sendDirect(p, refreshActiveTime)
@@ -335,17 +340,23 @@ func (s *session) send(p packet, refreshActiveTime bool) error {
 
 // sendDirect 直接发送数据包.
 func (s *session) sendDirect(p packet, refreshActiveTime bool) error {
-	select {
-	case s.pendingPackets <- p:
-		if refreshActiveTime {
-			s.refreshActiveTime()
-		}
-		return nil
-	case <-s.chClose:
-		return ErrSessionClosed
-	default:
+	ok := s.pendingPackets.Enqueue(p)
+	if !ok {
 		return ErrPendingPacketsFull
 	}
+
+	if refreshActiveTime {
+		s.refreshActiveTime()
+	}
+
+	if s.waitNotify.Load() {
+		select {
+		case s.pendingPacketsNotify <- struct{}{}:
+		default:
+		}
+	}
+
+	return nil
 }
 
 // Send 发送字节数据.
@@ -380,15 +391,27 @@ func (s *session) inactive() bool {
 
 // SessionPendingPacket 实现 gnet.SessionHandler. 返回待发送的数据包.
 func (s *session) SessionPendingPacket() (p gnet.Packet, more bool, err error) {
-	select {
-	case p := <-s.pendingPackets:
-		if p == nil {
-			return nil, false, ErrSessionClosed
-		} else {
-			return p, len(s.pendingPackets) > 0, nil
+	for {
+		p, ok := s.pendingPackets.Dequeue()
+		if ok {
+			s.waitNotify.Store(false)
+			return p, s.pendingPackets.Ready() > 0, nil
 		}
-	case <-s.chClose:
-		return nil, false, ErrSessionClosed
+
+		s.waitNotify.Store(true)
+
+		p, ok = s.pendingPackets.Dequeue()
+		if ok {
+			s.waitNotify.Store(false)
+			return p, s.pendingPackets.Ready() > 0, nil
+		}
+
+		select {
+		case <-s.pendingPacketsNotify:
+			continue
+		case <-s.chClose:
+			return nil, false, ErrSessionClosed
+		}
 	}
 }
 

@@ -1,9 +1,10 @@
 module github.com/godyy/gcluster
 
-go 1.22
+go 1.23
 
 require (
 	github.com/godyy/glog v0.1.1
+	github.com/godyy/gmpsc v0.0.4
 	github.com/godyy/gnet v0.2.2
 	github.com/godyy/gutils v0.0.1
 	github.com/pkg/errors v0.9.1

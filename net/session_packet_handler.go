@@ -29,7 +29,9 @@ func sessionHandleHeartbeat(s *session, p *heartbeatPacket) error {
 	if ping {
 		s.logger.Debug("handle ping")
 		p.setPong()
-		return s.send(p, false)
+		if err := s.send(p, false); err != nil {
+			s.logger.ErrorFields("send pong failed", lfdError(err))
+		}
 	} else {
 		s.logger.Debug("receive pong")
 	}
